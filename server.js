@@ -187,7 +187,7 @@ app.get('/api/vehiculos/:id', requireAuth, (req, res) => {
 app.post('/api/vehiculos', requireRole('admin', 'tramites'), (req, res) => {
   const body = req.body || {};
   const id = body.id || newId('v');
-  const cols = ['id','placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion'];
+  const cols = ['id','placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion','numero_tarjeta_operacion'];
   const row = Object.fromEntries(cols.map((c) => [c, body[c] ?? null]));
   row.id = id;
   row.estado = row.estado || 'Activo';
@@ -198,7 +198,7 @@ app.post('/api/vehiculos', requireRole('admin', 'tramites'), (req, res) => {
 });
 
 app.put('/api/vehiculos/:id', requireRole('admin', 'tramites'), (req, res) => {
-  const cols = ['placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion'];
+  const cols = ['placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion','numero_tarjeta_operacion'];
   const present = cols.filter((c) => c in req.body);
   if (present.length) {
     db.prepare(`UPDATE vehiculos SET ${present.map((c) => `${c}=@${c}`).join(',')}, updated_at=datetime('now') WHERE id=@id`)
@@ -671,6 +671,289 @@ app.put('/api/servicios/:id', requireRole('admin', 'operaciones'), (req, res) =>
   const present = cols.filter((c) => c in req.body);
   if (present.length) db.prepare(`UPDATE servicios SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id));
+});
+
+// ───────────────────────── Extractos (FUEC) — Resolución 6652/2019 Mintransporte ─────────────────────────
+// Ver docs/BACKEND_DESIGN.md §8 para el detalle normativo completo.
+
+function generarNumeroFuec(numeroContrato, numeroExtracto) {
+  const cfg = db.prepare('SELECT * FROM extracto_config WHERE id = 1').get();
+  const anioExtracto = String(new Date().getFullYear());
+  const pad = (v, n) => String(v).padStart(n, '0').slice(-n);
+  return (
+    pad(cfg.codigo_territorial, 3) +
+    pad(cfg.numero_resolucion_habilitacion, 4) +
+    pad(cfg.anio_habilitacion, 2) +
+    anioExtracto +
+    pad(numeroContrato, 4) +
+    pad(numeroExtracto, 4)
+  );
+}
+
+function docVigenteEn(doc, fecha) {
+  if (!doc || !doc.ven) return false;
+  return doc.ven >= fecha;
+}
+
+// Devuelve null si puede generarse, o el mensaje de bloqueo específico (nunca genérico,
+// tal como exige el documento de proceso) si no.
+function validarGeneracionExtracto({ contrato, cliente, vehiculo, conductores, fechaInicio, fechaFin, origen, destino, generadoPorTipo }) {
+  if (!contrato) return 'Contrato vencido';
+  if (contrato.estado !== 'APROBADO') return 'Cliente no autorizado';
+  if (fechaInicio < contrato.fecha_inicio || fechaFin > contrato.fecha_fin) return 'Contrato vencido';
+  if (contrato.requiere_convenio && !contrato.convenio_colaboracion) return 'Convenio inexistente';
+  if (contrato.origen && origen && contrato.origen.trim().toLowerCase() !== origen.trim().toLowerCase()) return 'Ruta no autorizada';
+  if (contrato.destino && destino && contrato.destino.trim().toLowerCase() !== destino.trim().toLowerCase()) return 'Ruta no autorizada';
+
+  if (generadoPorTipo === 'AFILIADO') {
+    if (cliente.es_icbf || cliente.es_corporativo) return 'Cliente no autorizado';
+    const cartera = db.prepare('SELECT saldo FROM cartera WHERE vehiculo_id = ?').get(vehiculo.id);
+    if (cartera && cartera.saldo > 0) return 'Mora del afiliado';
+  }
+
+  const docsVeh = { soat: 'SOAT vencido', rtm: 'Revisión técnico-mecánica vencida', to: 'Tarjeta de operación vencida' };
+  for (const [tipo, msg] of Object.entries(docsVeh)) {
+    if (!docVigenteEn(vehiculo.documentos[tipo], fechaFin)) return msg;
+  }
+
+  const docsCond = { licencia: 'Licencia de conducción vencida', examenMedico: 'Examen médico vencido', segSocial: 'Seguridad social vencida' };
+  const cfg = db.prepare('SELECT tolerancia_mant_defensivo_dias FROM extracto_config WHERE id=1').get();
+  for (const cond of conductores) {
+    for (const [tipo, msg] of Object.entries(docsCond)) {
+      if (!docVigenteEn(cond.docs[tipo], fechaFin)) return msg;
+    }
+    const md = cond.docs.mantDefensivo;
+    if (!md || !md.ven) return 'Certificado de manejo defensivo vencido';
+    const limite = new Date(md.ven + 'T00:00:00');
+    limite.setDate(limite.getDate() + (cfg?.tolerancia_mant_defensivo_dias ?? 10));
+    if (new Date(fechaFin + 'T00:00:00') > limite) return 'Certificado de manejo defensivo vencido';
+  }
+  return null;
+}
+
+// Config (numeración FUEC)
+app.get('/api/extracto-config', requireAuth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM extracto_config WHERE id = 1').get());
+});
+app.put('/api/extracto-config', requireRole('admin'), (req, res) => {
+  const cols = ['codigo_territorial', 'numero_resolucion_habilitacion', 'anio_habilitacion', 'tolerancia_mant_defensivo_dias'];
+  const present = cols.filter((c) => c in req.body);
+  if (present.length) {
+    db.prepare(`UPDATE extracto_config SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id = 1`).run(req.body);
+  }
+  res.json(db.prepare('SELECT * FROM extracto_config WHERE id = 1').get());
+});
+
+// Clientes
+app.get('/api/extractos/clientes', requireAuth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM extracto_clientes ORDER BY nombre').all());
+});
+app.post('/api/extractos/clientes', requireRole('admin', 'tramites'), (req, res) => {
+  const id = req.body.id || newId('ecl');
+  const cols = ['nombre', 'documento', 'direccion', 'telefono', 'email'];
+  const row = Object.fromEntries(cols.map((c) => [c, req.body[c] ?? null]));
+  row.id = id;
+  row.es_icbf = req.body.es_icbf ? 1 : 0;
+  row.es_corporativo = req.body.es_corporativo ? 1 : 0;
+  db.prepare(`INSERT INTO extracto_clientes (id, ${cols.join(',')}, es_icbf, es_corporativo) VALUES (@id, ${cols.map((c) => '@' + c).join(',')}, @es_icbf, @es_corporativo)`).run(row);
+  res.status(201).json(db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(id));
+});
+app.put('/api/extractos/clientes/:id', requireRole('admin', 'tramites'), (req, res) => {
+  const cols = ['nombre', 'documento', 'direccion', 'telefono', 'email'];
+  const present = cols.filter((c) => c in req.body);
+  const body = { ...req.body, id: req.params.id };
+  if ('es_icbf' in req.body) { present.push('es_icbf'); body.es_icbf = req.body.es_icbf ? 1 : 0; }
+  if ('es_corporativo' in req.body) { present.push('es_corporativo'); body.es_corporativo = req.body.es_corporativo ? 1 : 0; }
+  if (present.length) db.prepare(`UPDATE extracto_clientes SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+  const c = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'No encontrado' });
+  res.json(c);
+});
+
+// Contratos (flujo de aprobación)
+function contratoConDetalle(k) {
+  const cliente = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(k.cliente_id);
+  return { ...k, cliente };
+}
+app.get('/api/extractos/contratos', requireAuth, (req, res) => {
+  let sql = 'SELECT * FROM extracto_contratos';
+  const params = [];
+  if (req.query.clienteId) { sql += ' WHERE cliente_id = ?'; params.push(req.query.clienteId); }
+  sql += ' ORDER BY created_at DESC';
+  res.json(db.prepare(sql).all(...params).map(contratoConDetalle));
+});
+app.post('/api/extractos/contratos', requireRole('admin', 'tramites', 'operaciones'), (req, res) => {
+  const cliente = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(req.body.clienteId);
+  if (!cliente) return res.status(400).json({ error: 'Cliente no encontrado' });
+  // Restricciones de creación según el tipo de cliente (Área de Trámites para ICBF; Trámites/Operaciones para corporativos)
+  if (cliente.es_icbf && !['admin', 'tramites'].includes(req.session.rol)) {
+    return res.status(403).json({ error: 'Solo el Área de Trámites puede crear contratos ICBF' });
+  }
+  if (req.body.fechaInicio && req.body.fechaFin) {
+    const unAnioDespues = new Date(req.body.fechaInicio + 'T00:00:00');
+    unAnioDespues.setFullYear(unAnioDespues.getFullYear() + 1);
+    if (new Date(req.body.fechaFin + 'T00:00:00') > unAnioDespues) {
+      return res.status(400).json({ error: 'La vigencia del contrato no puede superar 1 año' });
+    }
+  }
+  const id = newId('ekt');
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const tx = db.transaction(() => {
+    const numero = (db.prepare('SELECT COALESCE(MAX(numero),0) n FROM extracto_contratos').get().n) + 1;
+    db.prepare(`INSERT INTO extracto_contratos
+      (id, numero, cliente_id, modalidad, objeto, origen, destino, fecha_inicio, fecha_fin, requiere_convenio, convenio_colaboracion, estado, creado_por)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDIENTE_FIRMA',?)`)
+      .run(id, numero, req.body.clienteId, req.body.modalidad, req.body.objeto || null, req.body.origen || null, req.body.destino || null,
+        req.body.fechaInicio || null, req.body.fechaFin || null, req.body.requiereConvenio ? 1 : 0, req.body.convenioColaboracion || null, usuario);
+  });
+  tx();
+  res.status(201).json(contratoConDetalle(db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(id)));
+});
+app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operaciones'), (req, res) => {
+  const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(req.params.id);
+  if (!contrato) return res.status(404).json({ error: 'No encontrado' });
+  const cols = ['objeto', 'origen', 'destino', 'fecha_inicio', 'fecha_fin', 'convenio_colaboracion', 'archivo_firmado_url'];
+  const present = cols.filter((c) => c in req.body);
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const body = { ...req.body, id: req.params.id };
+  if (present.length) db.prepare(`UPDATE extracto_contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+  if (req.body.estado) {
+    const validas = ['PENDIENTE_FIRMA', 'PENDIENTE_VALIDACION', 'APROBADO', 'DEVUELTO', 'RECHAZADO'];
+    if (!validas.includes(req.body.estado)) return res.status(400).json({ error: 'Estado inválido' });
+    const validadoPor = ['APROBADO', 'DEVUELTO', 'RECHAZADO'].includes(req.body.estado) ? usuario : contrato.validado_por;
+    db.prepare('UPDATE extracto_contratos SET estado=?, motivo_devolucion=?, validado_por=? WHERE id=?')
+      .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
+  }
+  res.json(contratoConDetalle(db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(req.params.id)));
+});
+
+// Extractos
+function extractoConDetalle(e) {
+  const conductores = db.prepare(`SELECT c.* FROM extracto_conductores ec JOIN conductores c ON c.id = ec.conductor_id WHERE ec.extracto_id=? ORDER BY ec.orden`).all(e.id);
+  const historial = db.prepare('SELECT * FROM extracto_historial WHERE extracto_id=? ORDER BY id').all(e.id);
+  const vehiculo = db.prepare('SELECT id, placa, clase, marca, linea, modelo, interno FROM vehiculos WHERE id=?').get(e.vehiculo_id);
+  const contrato = contratoConDetalle(db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(e.contrato_id));
+  return { ...e, conductores: conductores.map(conductorConDetalle), historial, vehiculo, contrato };
+}
+
+app.get('/api/extractos', requireAuth, (req, res) => {
+  let sql = 'SELECT * FROM extractos';
+  const clauses = [];
+  const params = [];
+  if (req.query.vehiculoId) { clauses.push('vehiculo_id = ?'); params.push(req.query.vehiculoId); }
+  if (req.query.contratoId) { clauses.push('contrato_id = ?'); params.push(req.query.contratoId); }
+  if (req.query.estado) { clauses.push('estado = ?'); params.push(req.query.estado); }
+  if (clauses.length) sql += ' WHERE ' + clauses.join(' AND ');
+  sql += ' ORDER BY created_at DESC';
+  res.json(db.prepare(sql).all(...params).map(extractoConDetalle));
+});
+
+app.get('/api/extractos/dashboard', requireAuth, (req, res) => {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const en15 = new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+  res.json({
+    total: db.prepare('SELECT COUNT(*) n FROM extractos').get().n,
+    vigentes: db.prepare("SELECT COUNT(*) n FROM extractos WHERE estado='VIGENTE' AND fecha_fin >= ?").get(hoy).n,
+    proximosAVencer: db.prepare("SELECT COUNT(*) n FROM extractos WHERE estado='VIGENTE' AND fecha_fin >= ? AND fecha_fin <= ?").get(hoy, en15).n,
+    vencidos: db.prepare("SELECT COUNT(*) n FROM extractos WHERE estado='VIGENTE' AND fecha_fin < ?").get(hoy).n,
+    anulados: db.prepare("SELECT COUNT(*) n FROM extractos WHERE estado='ANULADO'").get().n,
+    porTipo: db.prepare("SELECT generado_por_tipo, COUNT(*) n FROM extractos GROUP BY generado_por_tipo").all(),
+    porModalidad: db.prepare(`SELECT ec.modalidad, COUNT(*) n FROM extractos e JOIN extracto_contratos ec ON ec.id = e.contrato_id GROUP BY ec.modalidad`).all(),
+    vehiculosSinExtractoVigente: db.prepare(`
+      SELECT v.id, v.placa FROM vehiculos v
+      WHERE v.estado = 'Activo' AND NOT EXISTS (
+        SELECT 1 FROM extractos e WHERE e.vehiculo_id = v.id AND e.estado = 'VIGENTE' AND e.fecha_fin >= ?
+      )`).all(hoy),
+  });
+});
+
+// Consulta pública de validación (QR) — sin autenticación, solo datos no sensibles
+app.get('/api/public/extractos/:qrToken', (req, res) => {
+  const e = db.prepare('SELECT * FROM extractos WHERE qr_token = ?').get(req.params.qrToken);
+  if (!e) return res.status(404).json({ error: 'Extracto no encontrado' });
+  const vehiculo = db.prepare('SELECT placa, marca, linea, clase FROM vehiculos WHERE id=?').get(e.vehiculo_id);
+  const conductores = db.prepare(`SELECT c.nombre, c.cedula FROM extracto_conductores ec JOIN conductores c ON c.id=ec.conductor_id WHERE ec.extracto_id=? ORDER BY ec.orden`).all(e.id);
+  const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(e.contrato_id);
+  const cliente = db.prepare('SELECT nombre FROM extracto_clientes WHERE id=?').get(contrato.cliente_id);
+  const hoy = new Date().toISOString().slice(0, 10);
+  const estadoReal = e.estado === 'VIGENTE' && e.fecha_fin < hoy ? 'VENCIDO' : e.estado;
+  res.json({
+    numeroFuec: e.numero_fuec, estado: estadoReal, vehiculo, conductores,
+    cliente: cliente?.nombre, fechaInicio: e.fecha_inicio, fechaFin: e.fecha_fin, fechaGeneracion: e.created_at,
+  });
+});
+
+app.get('/api/extractos/:id', requireAuth, (req, res) => {
+  const e = db.prepare('SELECT * FROM extractos WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'No encontrado' });
+  res.json(extractoConDetalle(e));
+});
+
+function crearExtracto({ contratoId, vehiculoId, conductorIds, fechaInicio, fechaFin, origen, destino, generadoPorTipo, usuario, duplicadoDeId }) {
+  const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(contratoId);
+  const cliente = contrato && db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(contrato.cliente_id);
+  const vehiculo = vehiculoId && vehiculoConDetalle(db.prepare('SELECT * FROM vehiculos WHERE id=?').get(vehiculoId));
+  if (!vehiculo) return { error: 'Vehículo no encontrado' };
+  const conductores = (conductorIds || []).map((id) => conductorConDetalle(db.prepare('SELECT * FROM conductores WHERE id=?').get(id))).filter(Boolean);
+  if (!conductores.length) return { error: 'Debe indicar al menos un conductor' };
+
+  const errorValidacion = validarGeneracionExtracto({ contrato, cliente, vehiculo, conductores, fechaInicio, fechaFin, origen, destino, generadoPorTipo });
+  if (errorValidacion) return { error: errorValidacion };
+
+  const id = newId('ext');
+  const qrToken = crypto.randomBytes(16).toString('hex');
+  const tx = db.transaction(() => {
+    const numeroExtracto = (db.prepare('SELECT COUNT(*) n FROM extractos WHERE contrato_id=?').get(contratoId).n) + 1;
+    const numeroFuec = generarNumeroFuec(contrato.numero, numeroExtracto);
+    db.prepare(`INSERT INTO extractos
+      (id, numero_fuec, contrato_id, vehiculo_id, origen, destino, fecha_inicio, fecha_fin, generado_por_tipo, generado_por, declaracion_aceptada_en, duplicado_de_id, qr_token)
+      VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?)`)
+      .run(id, numeroFuec, contratoId, vehiculoId, origen || contrato.origen, destino || contrato.destino, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId || null, qrToken);
+    conductores.forEach((c, i) => db.prepare('INSERT INTO extracto_conductores (extracto_id, conductor_id, orden) VALUES (?,?,?)').run(id, c.id, i + 1));
+    db.prepare("INSERT INTO extracto_historial (extracto_id, usuario, accion, nota) VALUES (?,?,?,?)")
+      .run(id, usuario, duplicadoDeId ? 'Extracto duplicado' : 'Extracto generado', '');
+  });
+  tx();
+  return { id };
+}
+
+app.post('/api/extractos', requireAuth, (req, res) => {
+  const b = req.body || {};
+  if (!b.aceptaDeclaracion) return res.status(400).json({ error: 'Debes aceptar la declaración de responsabilidad para generar el extracto' });
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const generadoPorTipo = b.generadoPorTipo === 'AFILIADO' ? 'AFILIADO' : 'EMPRESA';
+  const result = crearExtracto({ ...b, usuario, generadoPorTipo });
+  if (result.error) return res.status(422).json({ error: result.error });
+  res.status(201).json(extractoConDetalle(db.prepare('SELECT * FROM extractos WHERE id=?').get(result.id)));
+});
+
+app.post('/api/extractos/:id/duplicar', requireAuth, (req, res) => {
+  const original = db.prepare('SELECT * FROM extractos WHERE id=?').get(req.params.id);
+  if (!original) return res.status(404).json({ error: 'No encontrado' });
+  const b = req.body || {};
+  if (!b.aceptaDeclaracion) return res.status(400).json({ error: 'Debes aceptar la declaración de responsabilidad para generar el extracto' });
+  const conductorIds = db.prepare('SELECT conductor_id FROM extracto_conductores WHERE extracto_id=? ORDER BY orden').all(original.id).map((r) => r.conductor_id);
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const result = crearExtracto({
+    contratoId: original.contrato_id, vehiculoId: b.vehiculoId || original.vehiculo_id, conductorIds,
+    fechaInicio: b.fechaInicio, fechaFin: b.fechaFin, origen: original.origen, destino: original.destino,
+    generadoPorTipo: original.generado_por_tipo, usuario, duplicadoDeId: original.id,
+  });
+  if (result.error) return res.status(422).json({ error: result.error });
+  res.status(201).json(extractoConDetalle(db.prepare('SELECT * FROM extractos WHERE id=?').get(result.id)));
+});
+
+app.put('/api/extractos/:id/anular', requireRole('admin', 'tramites'), (req, res) => {
+  const e = db.prepare('SELECT * FROM extractos WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'No encontrado' });
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const tx = db.transaction(() => {
+    db.prepare("UPDATE extractos SET estado='ANULADO' WHERE id=?").run(req.params.id);
+    db.prepare("INSERT INTO extracto_historial (extracto_id, usuario, accion, nota) VALUES (?,?,'Extracto anulado',?)")
+      .run(req.params.id, usuario, req.body?.nota || '');
+  });
+  tx();
+  res.json(extractoConDetalle(db.prepare('SELECT * FROM extractos WHERE id=?').get(req.params.id)));
 });
 
 // SPA: cualquier ruta no encontrada devuelve el index

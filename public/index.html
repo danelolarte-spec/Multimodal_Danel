@@ -7,6 +7,7 @@
 <script src="/vendor/react.production.min.js"></script>
 <script src="/vendor/react-dom.production.min.js"></script>
 <script src="/vendor/xlsx.full.min.js"></script>
+<script src="/vendor/qrcode.min.js"></script>
 <!--
   GOOGLE MAPS: reemplaza TU_API_KEY_DE_GOOGLE_MAPS por una API Key real de Google Cloud
   con las librerías "Places" y "Maps JavaScript API" habilitadas y con dominio autorizado.
@@ -17010,6 +17011,789 @@ function updateTarea(id, upd) {
   } : t);
 }
 
+// ══════════════════════ EXTRACTOS DE CONTRATO (FUEC) ══════════════════════
+// Resolución 6652 de 2019 (Mintransporte). Ver docs/BACKEND_DESIGN.md §8.
+const rc = React.createElement;
+
+async function extApiGet(url) {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Error de red');
+  return res.json();
+}
+async function extApiSend(method, url, body) {
+  const res = await fetch(url, {
+    method, credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.error || 'No se pudo completar la operación');
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function generarQRDataUrl(texto) {
+  return new Promise((resolve, reject) => {
+    if (!window.QRCode) { reject(new Error('Librería QR no disponible')); return; }
+    QRCode.toDataURL(texto, { width: 180, margin: 1 }, (err, url) => err ? reject(err) : resolve(url));
+  });
+}
+
+const EXT_MODALIDADES = {
+  GRUPO_ESPECIFICO: 'Grupo Específico de Usuarios',
+  TURISTICA: 'Turística',
+  EMPRESARIAL: 'Empresarial',
+  DISPOSICION_TOTAL: 'Disposición Total (salud / entidad pública)',
+};
+const EXT_ESTADOS_CONTRATO = {
+  PENDIENTE_FIRMA: { label: 'Pendiente de firma', badge: 'by' },
+  PENDIENTE_VALIDACION: { label: 'Pendiente validación', badge: 'bb' },
+  APROBADO: { label: 'Aprobado', badge: 'bg' },
+  DEVUELTO: { label: 'Devuelto', badge: 'bamb' },
+  RECHAZADO: { label: 'Rechazado', badge: 'br' },
+};
+const EXT_ESTADOS_EXTRACTO_BADGE = { VIGENTE: 'bg', VENCIDO: 'by', ANULADO: 'br' };
+
+// ─────────────────── Generación de documentos (impresión / PDF) ───────────────────
+
+function htmlFuec(extracto, qrDataUrl) {
+  const v = extracto.vehiculo;
+  const cliente = extracto.contrato.cliente;
+  const conds = extracto.conductores;
+  const condRows = [0, 1, 2].map(i => {
+    const c = conds[i];
+    return `<tr><td>Conductor ${i + 1}</td><td>${c ? c.nombre : '—'}</td><td>${c ? c.cedula : '—'}</td><td>${c ? (c.licencia || '—') : '—'}</td><td>${c && c.vencLic ? fmtD(c.vencLic) : '—'}</td></tr>`;
+  }).join('');
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>FUEC ${extracto.numero_fuec}</title>
+  <style>
+    body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:0}
+    .pg{max-width:820px;margin:0 auto;padding:30px 40px}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #110B79;padding-bottom:14px;margin-bottom:14px}
+    .hdr h1{font-size:15px;margin:0 0 4px;color:#110B79}
+    .hdr .sub{font-size:11px;color:#555}
+    table{border-collapse:collapse;width:100%;margin-bottom:14px}
+    td,th{border:1px solid #999;padding:6px 8px;font-size:11px;vertical-align:top}
+    th{background:#f0f0f0;text-align:left;width:180px}
+    .qr{text-align:center}
+    .qr img{width:120px;height:120px}
+    .ftr{margin-top:20px;font-size:10px;color:#777;border-top:1px solid #ccc;padding-top:8px}
+    .decl{font-size:10px;font-style:italic;color:#333;background:#f7f7f7;padding:8px;margin-top:10px;border-left:3px solid #110B79}
+    @media print{.pg{padding:10px}}
+  </style></head><body><div class="pg">
+    <div class="hdr">
+      <div>
+        <h1>FORMATO ÚNICO DE EXTRACTO DEL CONTRATO DEL SERVICIO PÚBLICO DE TRANSPORTE TERRESTRE AUTOMOTOR ESPECIAL</h1>
+        <div class="sub">N° ${extracto.numero_fuec}</div>
+      </div>
+      <div class="qr">${qrDataUrl ? `<img src="${qrDataUrl}">` : ''}<div style="font-size:9px">Verificación</div></div>
+    </div>
+    <table>
+      <tr><th>Razón social</th><td>TRANSPORTES MULTIMODAL GROUP S.A.S.</td><th>NIT</th><td>900.683.508-4</td></tr>
+      <tr><th>Contrato No.</th><td>${extracto.contrato.numero}</td><th>Contratante</th><td>${cliente.nombre}</td></tr>
+      <tr><th>NIT/CC contratante</th><td>${cliente.documento || '—'}</td><th>Modalidad</th><td>${EXT_MODALIDADES[extracto.contrato.modalidad] || extracto.contrato.modalidad}</td></tr>
+      <tr><th>Objeto del contrato</th><td colspan="3">${extracto.contrato.objeto || '—'}</td></tr>
+      <tr><th>Origen — Destino</th><td colspan="3">${extracto.origen || '—'} — ${extracto.destino || '—'}</td></tr>
+      <tr><th>Convenio de colaboración</th><td colspan="3">${extracto.contrato.convenio_colaboracion || 'No aplica'}</td></tr>
+    </table>
+    <table>
+      <tr><th>Vigencia — Fecha inicial</th><td>${fmtD(extracto.fecha_inicio)}</td><th>Vigencia — Fecha vencimiento</th><td>${fmtD(extracto.fecha_fin)}</td></tr>
+    </table>
+    <table>
+      <tr><th>Placa</th><td>${v.placa}</td><th>Modelo</th><td>${v.modelo}</td></tr>
+      <tr><th>Marca</th><td>${v.marca}</td><th>Clase</th><td>${v.clase}</td></tr>
+      <tr><th>Número interno</th><td>${v.interno || '—'}</td><th>N° Tarjeta de Operación</th><td>${v.numero_tarjeta_operacion || '—'}</td></tr>
+    </table>
+    <table>
+      <tr><th>Conductor</th><th>Nombre</th><th>Cédula</th><th>Licencia</th><th>Vigencia licencia</th></tr>
+      ${condRows}
+    </table>
+    <div class="decl">"Declaro bajo mi responsabilidad que la información registrada en este extracto corresponde a una operación real y cumple las condiciones legales y contractuales aplicables." — Aceptado el ${extracto.declaracion_aceptada_en} por ${extracto.generado_por}.</div>
+    <div class="ftr">Generado por PIG — Transportes Multimodal Group S.A.S. el ${new Date(extracto.created_at).toLocaleString('es-CO')}. Formato conforme a la Resolución 6652 de 2019 del Ministerio de Transporte. Documento no válido si presenta tachones o enmendaduras — debe portarse físicamente durante la prestación del servicio.</div>
+  </div></body></html>`;
+}
+
+function abrirEImprimir(html, toast) {
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 600); }
+  else if (toast) toast('El navegador bloqueó la ventana. Habilita las ventanas emergentes.', 'danger');
+}
+
+async function imprimirFuec(extracto, toast) {
+  try {
+    const url = window.location.origin + '/verificar/' + extracto.qr_token;
+    const qrDataUrl = await generarQRDataUrl(url);
+    abrirEImprimir(htmlFuec(extracto, qrDataUrl), toast);
+  } catch (e) {
+    if (toast) toast('No se pudo generar el PDF: ' + e.message, 'danger');
+  }
+}
+
+function htmlContratoGrupoEspecifico(contrato, extras) {
+  const c = contrato.cliente;
+  const v = extras.vehiculo;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Contrato ${contrato.numero}</title>
+  <style>
+    body{font-family:'Times New Roman',serif;font-size:12px;color:#111;margin:0;line-height:1.5}
+    .pg{max-width:800px;margin:0 auto;padding:40px 55px}
+    h1{font-size:14px;text-align:center;margin:2px 0}
+    h2{font-size:12px;text-align:center;margin:2px 0 20px;font-weight:normal}
+    .tbl{border-collapse:collapse;width:100%;margin:14px 0}
+    .tbl td{border:1px solid #333;padding:5px 8px;font-size:11px}
+    .just{text-align:justify}
+    .firmas{display:flex;justify-content:space-between;margin-top:60px}
+    .firma{width:45%;border-top:1px solid #333;text-align:center;padding-top:6px;font-size:11px}
+    @media print{.pg{padding:15px}}
+  </style></head><body><div class="pg">
+  <h1>TRANSPORTES MULTIMODAL GROUP S.A.S.</h1>
+  <h2>Nit. 900.683.508-4</h2>
+  <h1>CONTRATO DE PRESTACIÓN DE SERVICIO DE TRANSPORTE ESPECIAL PARA GRUPO ESPECÍFICO DE USUARIOS No. ${contrato.numero}</h1>
+  <p class="just">Entre TRANSPORTES MULTIMODAL GROUP S.A.S., entidad identificada con Nit 900.683.508, quien en adelante se llamará LA EMPRESA TRANSPORTADORA y ${c.nombre}, identificada con documento número ${c.documento || '____________'}, quien en adelante se llamará EL CONTRATANTE, se ha celebrado el presente Contrato de Prestación de Servicio de Transporte Terrestre Automotor de Pasajeros, el cual se regirá por las disposiciones contenidas en el Código de Comercio, las disposiciones Civiles pertinentes, la normatividad general de transporte público especial de pasajeros y por las siguientes cláusulas:</p>
+  <p class="just"><b>PRIMERA:</b> El presente contrato tiene como objeto el transporte especial de pasajeros para un grupo específico de usuarios con un origen y destino común, para el cual EL CONTRATANTE requiere el servicio de transporte desde ${contrato.origen || '____________'} hasta ${contrato.destino || '____________'}, durante el período comprendido entre el ${fmtD(contrato.fecha_inicio)} y el ${fmtD(contrato.fecha_fin)}, transportando ${extras.cantidadPasajeros || '____'} personas conforme al listado de pasajeros que se anexa a este contrato y hace parte integral del mismo.</p>
+  <p class="just"><b>SEGUNDA — DURACIÓN.</b> El término de duración de este contrato es el necesario para el transporte de las personas, y solo tendrá vigencia mientras se ejecute el contrato de transporte en el vehículo que se describe a continuación.</p>
+  <table class="tbl"><tr><td><b>PLACA</b><br>${v ? v.placa : '____________'}</td><td><b>N° TARJETA DE OPERACIÓN</b><br>${v ? (v.numero_tarjeta_operacion || '—') : '____________'}</td><td><b>CLASE</b><br>${v ? v.clase : '____________'}</td><td><b>CAPACIDAD</b><br>${v ? v.capacidad : '____________'}</td></tr></table>
+  <p class="just"><b>TERCERA — VALOR TOTAL DEL SERVICIO Y FORMA DE PAGO.</b> El costo del transporte será: (${extras.valor ? fmt(extras.valor) : '$ ....................'}) y se pagará directamente a la empresa, por anticipado a la firma del presente contrato, en el número de cuenta 43643681501 de la entidad bancaria Bancolombia. Si se requieren transportes adicionales se acordará directamente con la empresa realizando un otrosí al contrato.</p>
+  <p class="just"><b>CUARTA — RECORRIDO:</b> La ruta es: ${contrato.origen || '____________'} — ${contrato.destino || '____________'}.</p>
+  <p class="just"><b>QUINTA — OBLIGACIONES DEL CONTRATANTE:</b> 1. Cancelar oportunamente los valores pactados. 2. Informar con anterioridad no menor a 24 horas cualquier cambio hecho al recorrido o a los horarios. 3. Comunicar por escrito a la Empresa cualquier anomalía presentada en el servicio. 4. Velar porque los pasajeros no irrespeten al conductor. 5. Responder por los daños materiales causados por los pasajeros al vehículo. 6. Hacerse responsable de su propio equipaje.</p>
+  <p class="just"><b>SEXTA — OBLIGACIONES DEL CONTRATISTA:</b> 1. Prestar el servicio disponiendo de vehículos en buen estado para cubrir las rutas señaladas. 2. Constatar que los vehículos posean toda la documentación en regla (SOAT, pólizas RC contractual y extracontractual y demás documentos exigidos por la reglamentación vigente). 3. Cumplir con las disposiciones del Ministerio de Transporte, la Ley 769 de 2002, el Decreto 431 de 2017 y las normas que los modifiquen o adicionen.</p>
+  <p class="just"><b>SÉPTIMA — TERMINACIÓN:</b> Por mutuo acuerdo, por incumplimiento de las obligaciones derivadas del contrato, o porque desaparezcan las condiciones que le dieron origen.</p>
+  <p class="just"><b>OCTAVA — DOMICILIO CONTRACTUAL:</b> Medellín. Las controversias se resolverán mediante conciliación en la Cámara de Comercio de Medellín.</p>
+  <p class="just" style="font-size:10px">Aviso de privacidad: en cumplimiento de la Ley 1581 de 2012, TRANSPORTES MULTIMODAL GROUP S.A.S. será responsable del tratamiento de los datos personales suministrados con fines de gestión de clientes y administración del presente contrato. El titular puede ejercer sus derechos de acceso, corrección, supresión o revocación escribiendo a tramites@transportesmultimodal.com.</p>
+  <p class="just">En señal de aceptación se firma el presente documento en Medellín.</p>
+  <div class="firmas">
+    <div class="firma">EL CONTRATANTE<br>${c.nombre}<br>${c.documento || ''}</div>
+    <div class="firma">EMPRESA TRANSPORTADORA<br>MANUEL GUILLERMO RAMIREZ R.<br>Transportes Multimodal Group S.A.S. — NIT 900.683.508-4</div>
+  </div>
+  </div></body></html>`;
+}
+
+function htmlContratoTuristica(contrato, extras) {
+  const c = contrato.cliente;
+  const v = extras.vehiculo;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Contrato ${contrato.numero}</title>
+  <style>
+    body{font-family:'Times New Roman',serif;font-size:12px;color:#111;margin:0;line-height:1.5}
+    .pg{max-width:800px;margin:0 auto;padding:40px 55px}
+    h1{font-size:14px;text-align:center;margin:2px 0 4px}
+    h2{font-size:11px;text-align:center;margin:2px 0 20px;font-weight:normal;color:#555}
+    .tbl{border-collapse:collapse;width:100%;margin:14px 0}
+    .tbl td{border:1px solid #333;padding:5px 8px;font-size:11px}
+    .just{text-align:justify}
+    .firmas{display:flex;justify-content:space-between;margin-top:60px}
+    .firma{width:45%;border-top:1px solid #333;text-align:center;padding-top:6px;font-size:11px}
+    @media print{.pg{padding:15px}}
+  </style></head><body><div class="pg">
+  <h1>CONTRATO DE TRANSPORTE ESPECIAL PARA TRANSPORTE DE TURISTAS</h1>
+  <h2>Decreto 478 de 2021</h2>
+  <table class="tbl">
+    <tr><td><b>Contrato Nro.</b></td><td>${contrato.numero}</td><td><b>Servicio contratado</b></td><td>Transporte de Turistas</td></tr>
+    <tr><td><b>Empresa contratante</b></td><td>${c.nombre}</td><td><b>NIT / CC</b></td><td>${c.documento || '—'}</td></tr>
+    <tr><td><b>Teléfonos</b></td><td>${c.telefono || '—'}</td><td><b>Dirección</b></td><td>${c.direccion || '—'}</td></tr>
+    <tr><td><b>Objeto del contrato</b></td><td colspan="3">Traslado de turistas.</td></tr>
+  </table>
+  <p class="just">MANUEL GUILLERMO RAMIREZ ROJAS, identificado con cédula de ciudadanía, obrando en calidad de Representante Legal de TRANSPORTES MULTIMODAL GROUP S.A.S., con Nit. 900.683.508-4, domiciliada en Medellín, quien en adelante se llamará EL CONTRATISTA. La entidad ${c.nombre} identificada en el cuadro anterior, quien en adelante se llamará el CONTRATANTE. Las partes acuerdan someter este contrato a las siguientes cláusulas:</p>
+  <p class="just"><b>PRIMERA. OBJETO:</b> EL CONTRATISTA conducirá a los turistas remitidos por la entidad CONTRATANTE desde y hacia los lugares señalados en este contrato, que operará a nivel nacional. <b>Parágrafo 1.</b> Vehículo dispuesto: tipo ${v ? v.clase : '____________'}, placa ${v ? v.placa : '____________'}, marca ${v ? v.marca : '____________'}, modelo ${v ? v.modelo : '____________'}, N° tarjeta de operación ${v ? (v.numero_tarjeta_operacion || '—') : '____________'}. <b>Parágrafo 2 — Zonas de mayor influencia:</b> Medellín, ${extras.zonasInfluencia || '____________'}.</p>
+  <p class="just"><b>SEGUNDA — VIGENCIA:</b> La vigencia de este contrato será de 2 meses prorrogables automáticamente por el mismo término, si ninguna de las partes anuncia por escrito su voluntad de terminación con una antelación de 8 días calendario antes de la fecha de finalización de la vigencia o de la respectiva prórroga. Vigencia inicial: ${fmtD(contrato.fecha_inicio)} — ${fmtD(contrato.fecha_fin)}. EL CONTRATISTA podrá darlo por terminado en cualquier momento comunicándolo con 10 días calendario de anticipación, sin lugar a indemnización.</p>
+  <p class="just"><b>TERCERA — VALOR Y FORMA DE PAGO:</b> El valor de este contrato es aproximadamente de ${extras.valor ? fmt(extras.valor) : '$ ______________'}, correspondiente a la suma de los servicios prestados mensualmente a requerimiento del CONTRATANTE, calculada con base en la tarifa acordada con el propietario del vehículo, cancelada directamente al propietario del vehículo los primeros 5 días de cada mes.</p>
+  <p class="just"><b>CUARTA — OBLIGACIONES DE LAS PARTES.</b> Del CONTRATISTA: a) trasladar de manera diligente y cuidadosa; b) garantizar que el vehículo cumple los requisitos legales del servicio de transporte especial; c) velar por que los documentos del vehículo se mantengan actualizados. De la ENTIDAD CONTRATANTE: a) pagar oportunamente el valor del contrato; b) suministrar información oportuna relacionada con la prestación del servicio; c) velar por que los pasajeros sean respetuosos con el conductor; d) no transportar personas no autorizadas.</p>
+  <p class="just"><b>QUINTA — CAUSALES DE TERMINACIÓN:</b> Violación de las obligaciones contraídas, o mutuo acuerdo entre las partes.</p>
+  <p class="just" style="font-size:10px"><b>SEXTA — SARLAFT/PTEE:</b> Ambas partes se obligan a cumplir con las disposiciones relacionadas con la prevención del lavado de activos, financiación del terrorismo (LA/FT FPADM) y actos de corrupción o soborno (CO/SO). <b>SÉPTIMA:</b> LA EMPRESA CONTRATANTE declara que los recursos utilizados provienen de actividades lícitas. <b>OCTAVA:</b> Las partes declaran no estar vinculadas con personas incluidas en listas restrictivas nacionales o internacionales. <b>NOVENA:</b> La información suministrada se tratará conforme a la Ley 1581 de 2012. <b>DÉCIMA — DOMICILIO:</b> Medellín. <b>DÉCIMA PRIMERA:</b> El contratante autoriza el reporte en centrales de riesgo en caso de incumplimiento económico.</p>
+  <p class="just">En constancia de todo lo anterior, se firma en Medellín en dos (2) ejemplares de un mismo contenido y valor probatorio.</p>
+  <div class="firmas">
+    <div class="firma">CONTRATISTA<br>MANUEL GUILLERMO RAMIREZ ROJAS<br>Representante Legal — Transportes Multimodal Group S.A.S.</div>
+    <div class="firma">CONTRATANTE<br>${c.nombre}<br>Representante Legal</div>
+  </div>
+  </div></body></html>`;
+}
+
+// ─────────────────── Panel / Dashboard ───────────────────
+
+function ExtractosDashboard({ toast }) {
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    extApiGet('/api/extractos/dashboard').then(setData).catch(e => toast(e.message, 'danger')).finally(() => setLoading(false));
+  }, []);
+  if (loading) return rc('div', { className: 'empty' }, rc('p', null, 'Cargando…'));
+  if (!data) return null;
+  return rc('div', null,
+    rc('div', { className: 'sg' },
+      rc('div', { className: 'sc pri' }, rc('div', { className: 'sl' }, 'Extractos generados'), rc('div', { className: 'sv' }, data.total)),
+      rc('div', { className: 'sc ok' }, rc('div', { className: 'sl' }, 'Vigentes'), rc('div', { className: 'sv' }, data.vigentes)),
+      rc('div', { className: 'sc warn' }, rc('div', { className: 'sl' }, 'Próximos a vencer (15 días)'), rc('div', { className: 'sv' }, data.proximosAVencer)),
+      rc('div', { className: 'sc danger' }, rc('div', { className: 'sl' }, 'Vencidos'), rc('div', { className: 'sv' }, data.vencidos)),
+    ),
+    rc('div', { className: 'g2c' },
+      rc('div', { className: 'card' },
+        rc('div', { className: 'ch' }, rc('span', { className: 'ct' }, 'Vehículos sin extracto vigente')),
+        rc('div', { className: 'cb' },
+          data.vehiculosSinExtractoVigente.length === 0
+            ? rc('div', { className: 'empty' }, rc('p', null, '✓ Todos los vehículos activos tienen extracto vigente'))
+            : rc('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                data.vehiculosSinExtractoVigente.map(v => rc('span', { key: v.id, className: 'placa' }, v.placa)))
+        )
+      ),
+      rc('div', { className: 'card' },
+        rc('div', { className: 'ch' }, rc('span', { className: 'ct' }, 'Por modalidad')),
+        rc('div', { className: 'cb' },
+          data.porModalidad.length === 0 ? rc('div', { className: 'empty' }, rc('p', null, 'Sin datos')) :
+          data.porModalidad.map(m => rc('div', { key: m.modalidad, className: 'flex fjb mb2' },
+            rc('span', { className: 'tsr' }, EXT_MODALIDADES[m.modalidad] || m.modalidad),
+            rc('span', { className: 'fbold' }, m.n)))
+        )
+      ),
+    )
+  );
+}
+
+// ─────────────────── Clientes ───────────────────
+
+function ExtractosClientes({ toast }) {
+  const [clientes, setClientes] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [showForm, setShowForm] = React.useState(false);
+  const [form, setForm] = React.useState({ nombre: '', documento: '', direccion: '', telefono: '', email: '', es_icbf: false, es_corporativo: false });
+
+  function refresh() {
+    return extApiGet('/api/extractos/clientes').then(setClientes).catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  async function crear() {
+    if (!form.nombre.trim()) { toast('El nombre del cliente es obligatorio', 'danger'); return; }
+    try {
+      await extApiSend('POST', '/api/extractos/clientes', form);
+      toast('Cliente creado', 'success');
+      setShowForm(false);
+      setForm({ nombre: '', documento: '', direccion: '', telefono: '', email: '', es_icbf: false, es_corporativo: false });
+      refresh();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
+  return rc('div', null,
+    rc('div', { className: 'flex fjb mb3' },
+      rc('div', { className: 'tsr tmut' }, `${clientes.length} clientes`),
+      rc('button', { className: 'btn bp btn-sm', onClick: () => setShowForm(true) }, '+ Nuevo cliente')
+    ),
+    loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) :
+    rc('div', { className: 'card' }, rc('div', { className: 'tw' }, rc('table', null,
+      rc('thead', null, rc('tr', null, rc('th', null, 'Nombre'), rc('th', null, 'Documento'), rc('th', null, 'Teléfono'), rc('th', null, 'Tipo'))),
+      rc('tbody', null,
+        clientes.length === 0 ? rc('tr', null, rc('td', { colSpan: 4 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin clientes registrados')))) :
+        clientes.map(c => rc('tr', { key: c.id },
+          rc('td', null, c.nombre),
+          rc('td', { className: 'tmono' }, c.documento || '—'),
+          rc('td', null, c.telefono || '—'),
+          rc('td', null,
+            c.es_icbf ? rc('span', { className: 'badge bamb', style: { marginRight: 4 } }, 'ICBF') : null,
+            c.es_corporativo ? rc('span', { className: 'badge bb' }, 'Corporativo') : null,
+            !c.es_icbf && !c.es_corporativo ? rc('span', { className: 'badge bgr' }, 'Estándar') : null
+          )
+        ))
+      )
+    ))),
+    rc(Modal, { open: showForm, onClose: () => setShowForm(false), title: 'Nuevo cliente' },
+      rc('div', { className: 'mb' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Nombre / Razón social *'),
+          rc('input', { className: 'fi', value: form.nombre, onChange: e => setForm({ ...form, nombre: e.target.value }) })),
+        rc('div', { className: 'fg2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Cédula / NIT'),
+            rc('input', { className: 'fi', value: form.documento, onChange: e => setForm({ ...form, documento: e.target.value }) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Teléfono'),
+            rc('input', { className: 'fi', value: form.telefono, onChange: e => setForm({ ...form, telefono: e.target.value }) })),
+        ),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Dirección'),
+          rc('input', { className: 'fi', value: form.direccion, onChange: e => setForm({ ...form, direccion: e.target.value }) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Correo electrónico (opcional)'),
+          rc('input', { className: 'fi', type: 'email', value: form.email, onChange: e => setForm({ ...form, email: e.target.value }) })),
+        rc(Alert, { type: 'info' }, 'Los extractos ICBF solo pueden gestionarlos el Área de Trámites. Los corporativos requieren autorización de Trámites/Operaciones. Los afiliados nunca pueden generar extractos para clientes marcados aquí.'),
+        rc('div', { className: 'flex gap3 mt2' },
+          rc('label', { className: 'flex fic gap2', style: { fontSize: 12 } },
+            rc('input', { type: 'checkbox', checked: form.es_icbf, onChange: e => setForm({ ...form, es_icbf: e.target.checked }) }), 'Cliente ICBF'),
+          rc('label', { className: 'flex fic gap2', style: { fontSize: 12 } },
+            rc('input', { type: 'checkbox', checked: form.es_corporativo, onChange: e => setForm({ ...form, es_corporativo: e.target.checked }) }), 'Cliente corporativo Multimodal'),
+        )
+      ),
+      rc('div', { className: 'mf' },
+        rc('button', { className: 'btn bs', onClick: () => setShowForm(false) }, 'Cancelar'),
+        rc('button', { className: 'btn bp', onClick: crear }, 'Crear cliente')
+      )
+    )
+  );
+}
+
+// ─────────────────── Contratos (flujo de aprobación) ───────────────────
+
+function GenerarContratoDocModal({ contrato, open, onClose, toast }) {
+  const [vehiculoId, setVehiculoId] = React.useState('');
+  const [cantidadPasajeros, setCantidadPasajeros] = React.useState('');
+  const [valor, setValor] = React.useState('');
+  const [zonasInfluencia, setZonasInfluencia] = React.useState('');
+  const vehiculos = getVehiculosStore().filter(v => v.estado === 'Activo');
+
+  if (!open || !contrato) return null;
+  const tieneFormato = contrato.modalidad === 'GRUPO_ESPECIFICO' || contrato.modalidad === 'TURISTICA';
+
+  function generar() {
+    const vehiculo = vehiculos.find(v => v.id === vehiculoId) || null;
+    const extras = { vehiculo, cantidadPasajeros, valor: valor ? +valor : null, zonasInfluencia };
+    const html = contrato.modalidad === 'GRUPO_ESPECIFICO' ? htmlContratoGrupoEspecifico(contrato, extras) : htmlContratoTuristica(contrato, extras);
+    abrirEImprimir(html, toast);
+    onClose();
+  }
+
+  return rc(Modal, { open, onClose, title: `Generar documento de contrato — ${contrato.cliente.nombre}` },
+    rc('div', { className: 'mb' },
+      !tieneFormato
+        ? rc(Alert, { type: 'warn' }, `Aún no hay una plantilla cargada para la modalidad "${EXT_MODALIDADES[contrato.modalidad] || contrato.modalidad}". Disponibles: Grupo Específico y Turística.`)
+        : rc(React.Fragment, null,
+            rc(Alert, { type: 'info' }, 'Estos datos son solo para imprimir el documento (no se guardan en el contrato). El afiliado deberá descargarlo, firmarlo y volver a cargarlo firmado.'),
+            rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Vehículo'),
+              rc('select', { className: 'fsel', value: vehiculoId, onChange: e => setVehiculoId(e.target.value) },
+                rc('option', { value: '' }, '— Seleccionar —'),
+                vehiculos.map(v => rc('option', { key: v.id, value: v.id }, `${v.placa} — ${v.marca} ${v.linea}`)))),
+            contrato.modalidad === 'GRUPO_ESPECIFICO' && rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Cantidad de pasajeros'),
+              rc('input', { className: 'fi', type: 'number', value: cantidadPasajeros, onChange: e => setCantidadPasajeros(e.target.value) })),
+            contrato.modalidad === 'TURISTICA' && rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Zonas de mayor influencia (además de Medellín)'),
+              rc('input', { className: 'fi', value: zonasInfluencia, onChange: e => setZonasInfluencia(e.target.value) })),
+            rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Valor del servicio (opcional)'),
+              rc('input', { className: 'fi', type: 'number', value: valor, onChange: e => setValor(e.target.value) })),
+          )
+    ),
+    rc('div', { className: 'mf' },
+      rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'),
+      tieneFormato && rc('button', { className: 'btn bp', onClick: generar }, '🖨 Generar e imprimir')
+    )
+  );
+}
+
+function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
+  const [motivo, setMotivo] = React.useState('');
+  const [archivoUrl, setArchivoUrl] = React.useState('');
+  const [showGenerarDoc, setShowGenerarDoc] = React.useState(false);
+  if (!open || !contrato) return null;
+  const est = EXT_ESTADOS_CONTRATO[contrato.estado] || { label: contrato.estado, badge: 'bgr' };
+
+  async function cambiarEstado(nuevoEstado, extra) {
+    try {
+      await extApiSend('PUT', `/api/extractos/contratos/${contrato.id}`, { estado: nuevoEstado, ...extra });
+      toast(`Contrato actualizado a "${EXT_ESTADOS_CONTRATO[nuevoEstado]?.label || nuevoEstado}"`, 'success');
+      onChanged();
+      onClose();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
+  function subirFirma(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        await extApiSend('PUT', `/api/extractos/contratos/${contrato.id}`, { archivo_firmado_url: reader.result });
+        toast('Contrato firmado cargado', 'success');
+        onChanged();
+      } catch (e) { toast(e.message, 'danger'); }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  return rc(Modal, { open, onClose, title: `Contrato ${contrato.numero} — ${contrato.cliente.nombre}`, lg: true },
+    rc('div', { className: 'mb' },
+      rc('div', { className: 'flex fjb mb3' },
+        rc('span', { className: `badge ${est.badge}` }, est.label),
+        rc('button', { className: 'btn bs btn-sm', onClick: () => setShowGenerarDoc(true) }, '🖨 Generar documento de contrato')
+      ),
+      rc('div', { className: 'g2c' },
+        rc(IField, { label: 'Modalidad', value: EXT_MODALIDADES[contrato.modalidad] || contrato.modalidad }),
+        rc(IField, { label: 'Vigencia', value: `${fmtD(contrato.fecha_inicio)} — ${fmtD(contrato.fecha_fin)}` }),
+        rc(IField, { label: 'Origen', value: contrato.origen }),
+        rc(IField, { label: 'Destino', value: contrato.destino }),
+        rc(IField, { label: 'Objeto', value: contrato.objeto }),
+        rc(IField, { label: 'Convenio de colaboración', value: contrato.convenio_colaboracion }),
+      ),
+      contrato.archivo_firmado_url
+        ? rc('div', { className: 'doc-thumb', style: { marginTop: 10 }, onClick: () => window.open(contrato.archivo_firmado_url, '_blank') },
+            rc('div', { className: 'ic' }, '📎'), rc('div', null, rc('div', { className: 'fbold tsr' }, 'Contrato firmado cargado'), rc('div', { className: 'txs tmut' }, 'Clic para ver')))
+        : rc('div', { className: 'fg mt3' }, rc('label', { className: 'fl' }, 'Cargar contrato firmado (PDF/imagen)'),
+            rc('input', { type: 'file', onChange: e => subirFirma(e.target.files[0]) })),
+
+      contrato.estado === 'PENDIENTE_FIRMA' && rc('div', { className: 'mt3' },
+        rc('button', { className: 'btn bp btn-sm', onClick: () => cambiarEstado('PENDIENTE_VALIDACION') }, 'Enviar a validación de Trámites')),
+
+      contrato.estado === 'PENDIENTE_VALIDACION' && rc('div', { className: 'mt3' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Motivo (si se devuelve o rechaza)'),
+          rc('textarea', { className: 'fta', value: motivo, onChange: e => setMotivo(e.target.value) })),
+        rc('div', { className: 'flex gap2' },
+          rc('button', { className: 'btn bsu btn-sm', onClick: () => cambiarEstado('APROBADO') }, '✓ Aprobar'),
+          rc('button', { className: 'btn bs btn-sm', onClick: () => cambiarEstado('DEVUELTO', { motivoDevolucion: motivo }) }, '↩ Devolver'),
+          rc('button', { className: 'btn bd btn-sm', onClick: () => cambiarEstado('RECHAZADO', { motivoDevolucion: motivo }) }, '✕ Rechazar'),
+        )
+      ),
+      contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
+    ),
+    rc('div', { className: 'mf' }, rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar')),
+    rc(GenerarContratoDocModal, { contrato, open: showGenerarDoc, onClose: () => setShowGenerarDoc(false), toast })
+  );
+}
+
+function ExtractosContratos({ toast }) {
+  const [contratos, setContratos] = React.useState([]);
+  const [clientes, setClientes] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [showForm, setShowForm] = React.useState(false);
+  const [sel, setSel] = React.useState(null);
+  const [form, setForm] = React.useState({ clienteId: '', modalidad: 'GRUPO_ESPECIFICO', objeto: '', origen: '', destino: '', fechaInicio: '', fechaFin: '', requiereConvenio: false, convenioColaboracion: '' });
+
+  function refresh() {
+    return Promise.all([extApiGet('/api/extractos/contratos'), extApiGet('/api/extractos/clientes')])
+      .then(([c, cl]) => { setContratos(c); setClientes(cl); })
+      .catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  async function crear() {
+    if (!form.clienteId || !form.fechaInicio || !form.fechaFin) { toast('Cliente y vigencia son obligatorios', 'danger'); return; }
+    try {
+      await extApiSend('POST', '/api/extractos/contratos', form);
+      toast('Contrato creado — pendiente de firma', 'success');
+      setShowForm(false);
+      setForm({ clienteId: '', modalidad: 'GRUPO_ESPECIFICO', objeto: '', origen: '', destino: '', fechaInicio: '', fechaFin: '', requiereConvenio: false, convenioColaboracion: '' });
+      refresh();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
+  return rc('div', null,
+    rc('div', { className: 'flex fjb mb3' },
+      rc('div', { className: 'tsr tmut' }, `${contratos.length} contratos`),
+      rc('button', { className: 'btn bp btn-sm', onClick: () => setShowForm(true) }, '+ Nuevo contrato')
+    ),
+    loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) :
+    rc('div', { className: 'card' }, rc('div', { className: 'tw' }, rc('table', null,
+      rc('thead', null, rc('tr', null, rc('th', null, 'N°'), rc('th', null, 'Cliente'), rc('th', null, 'Modalidad'), rc('th', null, 'Vigencia'), rc('th', null, 'Estado'), rc('th', null))),
+      rc('tbody', null,
+        contratos.length === 0 ? rc('tr', null, rc('td', { colSpan: 6 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin contratos registrados')))) :
+        contratos.map(k => {
+          const est = EXT_ESTADOS_CONTRATO[k.estado] || { label: k.estado, badge: 'bgr' };
+          return rc('tr', { key: k.id },
+            rc('td', { className: 'tmono' }, k.numero),
+            rc('td', null, k.cliente.nombre, !!k.cliente.es_icbf && rc('span', { className: 'badge bamb', style: { marginLeft: 5, fontSize: 9 } }, 'ICBF')),
+            rc('td', null, EXT_MODALIDADES[k.modalidad] || k.modalidad),
+            rc('td', { className: 'tsr' }, `${fmtD(k.fecha_inicio)} — ${fmtD(k.fecha_fin)}`),
+            rc('td', null, rc('span', { className: `badge ${est.badge}` }, est.label)),
+            rc('td', null, rc('button', { className: 'btn btn-sm bs', onClick: () => setSel(k) }, 'Ver'))
+          );
+        })
+      )
+    ))),
+    rc(Modal, { open: showForm, onClose: () => setShowForm(false), title: 'Nuevo contrato' },
+      rc('div', { className: 'mb' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Cliente *'),
+          rc('select', { className: 'fsel', value: form.clienteId, onChange: e => setForm({ ...form, clienteId: e.target.value }) },
+            rc('option', { value: '' }, '— Seleccionar —'),
+            clientes.map(c => rc('option', { key: c.id, value: c.id }, c.nombre)))),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Modalidad'),
+          rc('select', { className: 'fsel', value: form.modalidad, onChange: e => setForm({ ...form, modalidad: e.target.value }) },
+            Object.entries(EXT_MODALIDADES).map(([k, v]) => rc('option', { key: k, value: k }, v)))),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Objeto del contrato'),
+          rc('input', { className: 'fi', value: form.objeto, onChange: e => setForm({ ...form, objeto: e.target.value }) })),
+        rc('div', { className: 'fg2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
+            rc('input', { className: 'fi', value: form.origen, onChange: e => setForm({ ...form, origen: e.target.value }) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
+            rc('input', { className: 'fi', value: form.destino, onChange: e => setForm({ ...form, destino: e.target.value }) })),
+        ),
+        rc('div', { className: 'fg2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha inicio *'),
+            rc('input', { className: 'fi', type: 'date', value: form.fechaInicio, onChange: e => setForm({ ...form, fechaInicio: e.target.value }) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha fin * (máx. 1 año)'),
+            rc('input', { className: 'fi', type: 'date', value: form.fechaFin, onChange: e => setForm({ ...form, fechaFin: e.target.value }) })),
+        ),
+        rc('label', { className: 'flex fic gap2 mt2', style: { fontSize: 12 } },
+          rc('input', { type: 'checkbox', checked: form.requiereConvenio, onChange: e => setForm({ ...form, requiereConvenio: e.target.checked }) }),
+          'Requiere convenio de colaboración empresarial'),
+        form.requiereConvenio && rc('div', { className: 'fg mt2' }, rc('label', { className: 'fl' }, 'Convenio de colaboración'),
+          rc('input', { className: 'fi', value: form.convenioColaboracion, onChange: e => setForm({ ...form, convenioColaboracion: e.target.value }) })),
+      ),
+      rc('div', { className: 'mf' },
+        rc('button', { className: 'btn bs', onClick: () => setShowForm(false) }, 'Cancelar'),
+        rc('button', { className: 'btn bp', onClick: crear }, 'Crear contrato')
+      )
+    ),
+    rc(ContratoDetalleModal, { contrato: sel, open: !!sel, onClose: () => setSel(null), toast, onChanged: refresh })
+  );
+}
+
+// ─────────────────── Extractos: generación y listado ───────────────────
+
+function GenerarExtractoForm({ toast, onGenerado }) {
+  const [contratos, setContratos] = React.useState([]);
+  const [contratoId, setContratoId] = React.useState('');
+  const [vehiculoId, setVehiculoId] = React.useState('');
+  const [conductorIds, setConductorIds] = React.useState(['']);
+  const [fechaInicio, setFechaInicio] = React.useState('');
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [origen, setOrigen] = React.useState('');
+  const [destino, setDestino] = React.useState('');
+  const [generadoPorTipo, setGeneradoPorTipo] = React.useState('EMPRESA');
+  const [acepta, setAcepta] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    extApiGet('/api/extractos/contratos').then(cs => setContratos(cs.filter(c => c.estado === 'APROBADO'))).catch(e => toast(e.message, 'danger'));
+  }, []);
+
+  const contrato = contratos.find(c => c.id === contratoId);
+  React.useEffect(() => {
+    if (contrato) { setOrigen(contrato.origen || ''); setDestino(contrato.destino || ''); }
+  }, [contratoId]);
+
+  const vehiculos = getVehiculosStore().filter(v => v.estado === 'Activo');
+  const conductores = getConductores().filter(c => c.activo);
+
+  function setConductorAt(i, val) {
+    setConductorIds(p => p.map((x, j) => j === i ? val : x));
+  }
+
+  async function generar() {
+    setError('');
+    if (!contratoId || !vehiculoId || !fechaInicio || !fechaFin) { setError('Completa contrato, vehículo y vigencia del extracto'); return; }
+    if (!acepta) { setError('Debes aceptar la declaración de responsabilidad'); return; }
+    setLoading(true);
+    try {
+      const extracto = await extApiSend('POST', '/api/extractos', {
+        contratoId, vehiculoId, conductorIds: conductorIds.filter(Boolean),
+        fechaInicio, fechaFin, origen, destino, generadoPorTipo, aceptaDeclaracion: true,
+      });
+      toast(`Extracto ${extracto.numero_fuec} generado`, 'success');
+      setContratoId(''); setVehiculoId(''); setConductorIds(['']); setFechaInicio(''); setFechaFin(''); setAcepta(false);
+      onGenerado(extracto);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return rc('div', { className: 'card' },
+    rc('div', { className: 'ch' }, rc('span', { className: 'ct' }, '📄 Generar nuevo extracto')),
+    rc('div', { className: 'cb' },
+      error && rc(Alert, { type: 'danger' }, error),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Contrato (solo aprobados) *'),
+        rc('select', { className: 'fsel', value: contratoId, onChange: e => setContratoId(e.target.value) },
+          rc('option', { value: '' }, '— Seleccionar —'),
+          contratos.map(c => rc('option', { key: c.id, value: c.id }, `${c.numero} — ${c.cliente.nombre} (${EXT_MODALIDADES[c.modalidad] || c.modalidad})`)))),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Vehículo *'),
+          rc('select', { className: 'fsel', value: vehiculoId, onChange: e => setVehiculoId(e.target.value) },
+            rc('option', { value: '' }, '— Seleccionar —'),
+            vehiculos.map(v => rc('option', { key: v.id, value: v.id }, `${v.placa} — ${v.marca} ${v.linea}`)))),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Generado por'),
+          rc('select', { className: 'fsel', value: generadoPorTipo, onChange: e => setGeneradoPorTipo(e.target.value) },
+            rc('option', { value: 'EMPRESA' }, 'Empresa (operación directa)'),
+            rc('option', { value: 'AFILIADO' }, 'Afiliado (autonomía controlada)'))),
+      ),
+      [0, 1, 2].map(i => rc('div', { key: i, className: 'fg' }, rc('label', { className: 'fl' }, `Conductor ${i + 1}${i === 0 ? ' *' : ' (opcional)'}`),
+        rc('select', { className: 'fsel', value: conductorIds[i] || '', onChange: e => setConductorAt(i, e.target.value) },
+          rc('option', { value: '' }, '— Ninguno —'),
+          conductores.map(c => rc('option', { key: c.id, value: c.id }, `${c.nombre} — CC ${c.cedula}`))))),
+      rc('div', { className: 'fg2 mt3' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha inicio *'),
+          rc('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha fin *'),
+          rc('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) })),
+      ),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
+          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
+          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
+      ),
+      rc('div', { className: 'al al-info', style: { marginTop: 12 } },
+        rc('label', { className: 'flex gap2', style: { alignItems: 'flex-start', cursor: 'pointer' } },
+          rc('input', { type: 'checkbox', checked: acepta, onChange: e => setAcepta(e.target.checked), style: { marginTop: 2 } }),
+          rc('span', null, 'Declaro bajo mi responsabilidad que la información registrada en este extracto corresponde a una operación real y cumple las condiciones legales y contractuales aplicables.'))),
+      rc('button', { className: 'btn bp mt3', disabled: loading, onClick: generar }, loading ? 'Validando…' : '📄 Generar extracto')
+    )
+  );
+}
+
+function ExtractoDetalleModal({ extracto, open, onClose, toast, onChanged }) {
+  const [showDuplicar, setShowDuplicar] = React.useState(false);
+  const [fechaInicio, setFechaInicio] = React.useState('');
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [acepta, setAcepta] = React.useState(false);
+  const [error, setError] = React.useState('');
+  if (!open || !extracto) return null;
+
+  async function anular() {
+    const nota = prompt('Motivo de anulación:');
+    if (nota === null) return;
+    try {
+      await extApiSend('PUT', `/api/extractos/${extracto.id}/anular`, { nota });
+      toast('Extracto anulado', 'success');
+      onChanged();
+      onClose();
+    } catch (e) { toast(e.message, 'danger'); }
+  }
+
+  async function duplicar() {
+    setError('');
+    if (!fechaInicio || !fechaFin) { setError('Indica la nueva vigencia'); return; }
+    if (!acepta) { setError('Debes aceptar la declaración de responsabilidad'); return; }
+    try {
+      const nuevo = await extApiSend('POST', `/api/extractos/${extracto.id}/duplicar`, { fechaInicio, fechaFin, aceptaDeclaracion: true });
+      toast(`Extracto ${nuevo.numero_fuec} generado (duplicado)`, 'success');
+      setShowDuplicar(false);
+      onChanged();
+      onClose();
+    } catch (e) { setError(e.message); }
+  }
+
+  return rc(Modal, { open, onClose, title: `Extracto ${extracto.numero_fuec}`, lg: true },
+    rc('div', { className: 'mb' },
+      rc('div', { className: 'flex fjb mb3' },
+        rc('span', { className: `badge ${EXT_ESTADOS_EXTRACTO_BADGE[extracto.estado] || 'bgr'}` }, extracto.estado),
+        rc('div', { className: 'flex gap2' },
+          rc('button', { className: 'btn bs btn-sm', onClick: () => imprimirFuec(extracto, toast) }, '🖨 Imprimir / QR'),
+          rc('button', { className: 'btn bs btn-sm', onClick: () => setShowDuplicar(true) }, '⧉ Duplicar'),
+          extracto.estado !== 'ANULADO' && rc('button', { className: 'btn bd btn-sm', onClick: anular }, '✕ Anular'),
+        )
+      ),
+      rc('div', { className: 'g2c' },
+        rc(IField, { label: 'Cliente', value: extracto.contrato.cliente.nombre }),
+        rc(IField, { label: 'Contrato', value: extracto.contrato.numero }),
+        rc(IField, { label: 'Vehículo', value: `${extracto.vehiculo.placa} — ${extracto.vehiculo.marca}` }),
+        rc(IField, { label: 'Conductores', value: extracto.conductores.map(c => c.nombre).join(', ') }),
+        rc(IField, { label: 'Vigencia', value: `${fmtD(extracto.fecha_inicio)} — ${fmtD(extracto.fecha_fin)}` }),
+        rc(IField, { label: 'Generado por', value: `${extracto.generado_por} (${extracto.generado_por_tipo})` }),
+      ),
+      rc('div', { className: 'mt3' },
+        rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Historial'),
+        extracto.historial.map(h => rc('div', { key: h.id, className: 'tl-item' },
+          rc('div', { className: 'tl-dot' }),
+          rc('div', { className: 'tl-body' },
+            rc('div', { className: 'tl-meta' }, rc('span', { className: 'tl-user' }, h.usuario), rc('span', { className: 'tl-date' }, h.fecha)),
+            rc('div', { className: 'tl-action' }, h.accion),
+            h.nota && rc('div', { className: 'tl-note' }, h.nota))))
+      ),
+      showDuplicar && rc('div', { className: 'card mt3' }, rc('div', { className: 'cb' },
+        error && rc(Alert, { type: 'danger' }, error),
+        rc('div', { className: 'fg2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Nueva fecha inicio'),
+            rc('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Nueva fecha fin'),
+            rc('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) })),
+        ),
+        rc('label', { className: 'flex gap2', style: { alignItems: 'flex-start', fontSize: 12 } },
+          rc('input', { type: 'checkbox', checked: acepta, onChange: e => setAcepta(e.target.checked) }),
+          rc('span', null, 'Declaro bajo mi responsabilidad que la información registrada corresponde a una operación real.')),
+        rc('div', { className: 'flex gap2 mt2' },
+          rc('button', { className: 'btn bp btn-sm', onClick: duplicar }, 'Confirmar duplicado'),
+          rc('button', { className: 'btn bs btn-sm', onClick: () => setShowDuplicar(false) }, 'Cancelar'),
+        )
+      ))
+    ),
+    rc('div', { className: 'mf' }, rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'))
+  );
+}
+
+function ExtractosListado({ toast }) {
+  const [extractos, setExtractos] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [sel, setSel] = React.useState(null);
+
+  function refresh() {
+    return extApiGet('/api/extractos').then(setExtractos).catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  return rc('div', null,
+    rc(GenerarExtractoForm, { toast, onGenerado: (e) => { refresh(); setSel(e); } }),
+    rc('div', { className: 'mt4' },
+      rc('div', { className: 'tsr tmut mb2' }, `${extractos.length} extractos generados`),
+      loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) :
+      rc('div', { className: 'card' }, rc('div', { className: 'tw' }, rc('table', null,
+        rc('thead', null, rc('tr', null, rc('th', null, 'N° FUEC'), rc('th', null, 'Cliente'), rc('th', null, 'Vehículo'), rc('th', null, 'Vigencia'), rc('th', null, 'Estado'), rc('th', null))),
+        rc('tbody', null,
+          extractos.length === 0 ? rc('tr', null, rc('td', { colSpan: 6 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin extractos generados')))) :
+          extractos.map(e => rc('tr', { key: e.id },
+            rc('td', { className: 'tmono', style: { fontSize: 10 } }, e.numero_fuec),
+            rc('td', null, e.contrato.cliente.nombre),
+            rc('td', null, rc('span', { className: 'placa' }, e.vehiculo.placa)),
+            rc('td', { className: 'tsr' }, `${fmtD(e.fecha_inicio)} — ${fmtD(e.fecha_fin)}`),
+            rc('td', null, rc('span', { className: `badge ${EXT_ESTADOS_EXTRACTO_BADGE[e.estado] || 'bgr'}` }, e.estado)),
+            rc('td', null, rc('button', { className: 'btn btn-sm bs', onClick: () => setSel(e) }, 'Ver'))
+          ))
+        )
+      )))
+    ),
+    rc(ExtractoDetalleModal, { extracto: sel, open: !!sel, onClose: () => setSel(null), toast, onChanged: refresh })
+  );
+}
+
+// ─────────────────── Componente principal del submódulo ───────────────────
+
+function Extractos({ toast }) {
+  const [tab, setTab] = React.useState('dashboard');
+  return rc('div', null,
+    rc('div', { className: 'section-bar mb4' },
+      rc('div', null,
+        rc('div', { className: 'sh-head' }, '📄 Extractos de Contrato (FUEC)'),
+        rc('div', { className: 'sh-sub' }, 'Formato Único de Extracto del Contrato — Resolución 6652 de 2019, Ministerio de Transporte')
+      )
+    ),
+    rc(Tabs, {
+      tabs: [
+        { id: 'dashboard', label: '📊 Panel' },
+        { id: 'clientes', label: '👥 Clientes' },
+        { id: 'contratos', label: '📁 Contratos' },
+        { id: 'extractos', label: '📄 Extractos' },
+      ],
+      active: tab, onChange: setTab,
+    }),
+    tab === 'dashboard' && rc(ExtractosDashboard, { toast }),
+    tab === 'clientes' && rc(ExtractosClientes, { toast }),
+    tab === 'contratos' && rc(ExtractosContratos, { toast }),
+    tab === 'extractos' && rc(ExtractosListado, { toast }),
+  );
+}
+
+// ─────────────────── Verificación pública (QR) ───────────────────
+
+function VerificacionPublica({ token }) {
+  const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    fetch('/api/public/extractos/' + token).then(res => {
+      if (!res.ok) throw new Error('Extracto no encontrado o inválido');
+      return res.json();
+    }).then(setData).catch(e => setError(e.message));
+  }, [token]);
+
+  const badge = { VIGENTE: '#15803d', VENCIDO: '#a16207', ANULADO: '#b91c1c' };
+  return rc('div', { style: { minHeight: '100vh', background: '#f6f4ef', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'system-ui, sans-serif' } },
+    rc('div', { style: { background: '#fff', borderRadius: 12, padding: 28, maxWidth: 420, width: '100%', boxShadow: '0 4px 20px rgba(0,0,0,.08)' } },
+      rc('div', { style: { fontSize: 11, fontWeight: 700, color: '#FF7F00', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 } }, 'Transportes Multimodal Group S.A.S.'),
+      rc('div', { style: { fontSize: 16, fontWeight: 800, marginBottom: 16 } }, 'Verificación de Extracto de Contrato'),
+      error && rc('div', { style: { color: '#b91c1c', fontSize: 13 } }, error),
+      !data && !error && rc('div', { style: { color: '#888', fontSize: 13 } }, 'Consultando…'),
+      data && rc('div', null,
+        rc('div', { style: { display: 'inline-block', padding: '4px 12px', borderRadius: 20, background: badge[data.estado] || '#888', color: '#fff', fontWeight: 700, fontSize: 12, marginBottom: 14 } }, data.estado),
+        rc('div', { style: { fontSize: 11, color: '#888', marginBottom: 2 } }, 'N° FUEC'),
+        rc('div', { style: { fontFamily: 'monospace', fontSize: 13, marginBottom: 12 } }, data.numeroFuec),
+        rc('div', { style: { fontSize: 11, color: '#888', marginBottom: 2 } }, 'Vehículo'),
+        rc('div', { style: { fontSize: 13, marginBottom: 12 } }, `${data.vehiculo.placa} — ${data.vehiculo.marca} ${data.vehiculo.linea}`),
+        rc('div', { style: { fontSize: 11, color: '#888', marginBottom: 2 } }, 'Conductor(es)'),
+        rc('div', { style: { fontSize: 13, marginBottom: 12 } }, data.conductores.map(c => c.nombre).join(', ') || '—'),
+        rc('div', { style: { fontSize: 11, color: '#888', marginBottom: 2 } }, 'Cliente'),
+        rc('div', { style: { fontSize: 13, marginBottom: 12 } }, data.cliente),
+        rc('div', { style: { fontSize: 11, color: '#888', marginBottom: 2 } }, 'Vigencia'),
+        rc('div', { style: { fontSize: 13 } }, `${fmtD(data.fechaInicio)} — ${fmtD(data.fechaFin)}`),
+      )
+    )
+  );
+}
+
 /* ── AdminDocumentos: Editor de documentos requeridos en solicitudes ── */
 function AdminDocumentos({toast}) {
   const [docs, setDocs] = React.useState(getDocsRequeridos());
@@ -19480,6 +20264,8 @@ const MENU = [{
 }, {
   id: 'gestion-tramites', label: 'Gestión de Trámites', ico: '📋', sec: null
 }, {
+  id: 'extractos', label: 'Extractos (FUEC)', ico: '📄', sec: null
+}, {
   id: 'infracciones', label: 'Infracciones VIGÍA', ico: '⚠', sec: 'CONTROL Y SEGUIMIENTO',
   badge: infracciones0.filter(i => i.estado !== 'CERRADO').length || null
 }, {
@@ -19510,6 +20296,7 @@ const TITLES = {
   vehiculos: {t: 'Gestión de Flota', s: 'Vehículos y documentación'},
   conductores: {t: 'Gestión de Conductores', s: 'Habilitación, documentos y seguridad social'},
   'gestion-tramites': {t: 'Gestión de Trámites', s: 'Vinculaciones · Desvinculaciones · Operativos'},
+  extractos: {t: 'Extractos de Contrato (FUEC)', s: 'Formato Único de Extracto del Contrato — Resolución 6652 de 2019'},
   infracciones: {t: 'Sistema VIGÍA', s: 'Control de infracciones'},
   cartera: {t: 'Cartera de Afiliados', s: 'Obligaciones y cobros'},
   polizas: {t: 'Pólizas y Siniestralidad', s: 'Administración de seguros'},
@@ -21908,6 +22695,8 @@ function App() {
         return /*#__PURE__*/React.createElement(PortalAfiliado, p);
       case 'gestion-tramites':
         return /*#__PURE__*/React.createElement(GestionTramites, p);
+      case 'extractos':
+        return /*#__PURE__*/React.createElement(Extractos, p);
       case 'admin-docs':
         return /*#__PURE__*/React.createElement(AdminDocumentos, p);
       case 'configuraciones':
@@ -22038,6 +22827,14 @@ function App() {
     toasts: toasts
   }));
 }
-ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(AuthGate, null));</script>
+(function() {
+  var m = window.location.pathname.match(/^\/verificar\/([a-zA-Z0-9]+)/);
+  var root = ReactDOM.createRoot(document.getElementById('root'));
+  if (m) {
+    root.render(React.createElement(VerificacionPublica, { token: m[1] }));
+  } else {
+    root.render(/*#__PURE__*/React.createElement(AuthGate, null));
+  }
+})();</script>
 </body>
 </html>

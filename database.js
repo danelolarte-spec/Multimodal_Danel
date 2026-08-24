@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS vehiculos (
   fecha_vin TEXT,
   convenio_cliente TEXT, convenio_vigencia TEXT, convenio_estado TEXT,
   log_habilitacion TEXT NOT NULL DEFAULT '[]', -- JSON: historial de habilitar/deshabilitar
+  numero_tarjeta_operacion TEXT, -- requerido en el FUEC (Art. 3.10, Resolución 6652/2019)
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -287,6 +288,78 @@ CREATE TABLE IF NOT EXISTS servicios (
   estado TEXT NOT NULL DEFAULT 'Pendiente', -- Pendiente | Asignado | En Curso | Finalizado | Cancelado | Liquidado
   valor INTEGER, pax INTEGER, obs TEXT
 );
+
+-- ───────────────────────── EXTRACTOS (FUEC — Resolución 6652 de 2019, Mintransporte) ─────────────────────────
+-- Configuración de la empresa para construir el número del FUEC (Art. 4 de la resolución):
+-- código territorial (3) + número de resolución de habilitación (4) + año de habilitación (2)
+CREATE TABLE IF NOT EXISTS extracto_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  codigo_territorial TEXT NOT NULL DEFAULT '305',
+  numero_resolucion_habilitacion TEXT NOT NULL DEFAULT '0010',
+  anio_habilitacion TEXT NOT NULL DEFAULT '13',
+  tolerancia_mant_defensivo_dias INTEGER NOT NULL DEFAULT 10
+);
+
+-- Clientes para efectos de extractos (distinto de "convenios": aquí se modela el flujo de
+-- contrato-con-firma que describe el proceso, y las banderas ICBF/corporativo que restringen
+-- quién puede crear extractos para ese cliente).
+CREATE TABLE IF NOT EXISTS extracto_clientes (
+  id TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL, documento TEXT, direccion TEXT, telefono TEXT, email TEXT,
+  es_icbf INTEGER NOT NULL DEFAULT 0,
+  es_corporativo INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Contratos con cada cliente. Flujo: PENDIENTE_FIRMA -> PENDIENTE_VALIDACION -> APROBADO | DEVUELTO | RECHAZADO.
+CREATE TABLE IF NOT EXISTS extracto_contratos (
+  id TEXT PRIMARY KEY,
+  numero INTEGER NOT NULL UNIQUE, -- consecutivo de contrato de la empresa (4 dígitos en el FUEC)
+  cliente_id TEXT NOT NULL REFERENCES extracto_clientes(id) ON DELETE CASCADE,
+  modalidad TEXT NOT NULL, -- GRUPO_ESPECIFICO | TURISTICA | EMPRESARIAL | DISPOSICION_TOTAL
+  objeto TEXT, origen TEXT, destino TEXT,
+  fecha_inicio TEXT, fecha_fin TEXT, -- vigencia del contrato: nunca > 1 año (validado en la API)
+  requiere_convenio INTEGER NOT NULL DEFAULT 0,
+  convenio_colaboracion TEXT, -- nombre/descr. del convenio de colaboración empresarial, si aplica
+  estado TEXT NOT NULL DEFAULT 'PENDIENTE_FIRMA',
+  archivo_firmado_url TEXT,
+  motivo_devolucion TEXT,
+  creado_por TEXT, validado_por TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_extracto_contratos_cliente ON extracto_contratos(cliente_id);
+
+-- Extractos generados (instancias del FUEC). Inmutables una vez creados (solo cambia estado por vencimiento/anulación).
+CREATE TABLE IF NOT EXISTS extractos (
+  id TEXT PRIMARY KEY,
+  numero_fuec TEXT NOT NULL UNIQUE, -- 21 dígitos, Art. 4 de la resolución
+  contrato_id TEXT NOT NULL REFERENCES extracto_contratos(id),
+  vehiculo_id TEXT NOT NULL REFERENCES vehiculos(id),
+  origen TEXT, destino TEXT,
+  fecha_inicio TEXT NOT NULL, fecha_fin TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'VIGENTE', -- VIGENTE | VENCIDO | ANULADO
+  generado_por_tipo TEXT NOT NULL DEFAULT 'EMPRESA', -- AFILIADO | EMPRESA
+  generado_por TEXT,
+  declaracion_aceptada_en TEXT,
+  duplicado_de_id TEXT REFERENCES extractos(id),
+  qr_token TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_extractos_contrato ON extractos(contrato_id);
+CREATE INDEX IF NOT EXISTS idx_extractos_vehiculo ON extractos(vehiculo_id);
+
+CREATE TABLE IF NOT EXISTS extracto_conductores (
+  extracto_id TEXT NOT NULL REFERENCES extractos(id) ON DELETE CASCADE,
+  conductor_id TEXT NOT NULL REFERENCES conductores(id),
+  orden INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (extracto_id, conductor_id)
+);
+
+CREATE TABLE IF NOT EXISTS extracto_historial (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  extracto_id TEXT NOT NULL REFERENCES extractos(id) ON DELETE CASCADE,
+  fecha TEXT NOT NULL DEFAULT (datetime('now')), usuario TEXT, accion TEXT, nota TEXT
+);
 `);
 
 function seedIfEmpty() {
@@ -404,6 +477,14 @@ function seedIfEmpty() {
     ];
     const ins = db.prepare(`INSERT INTO documentos_solicitud_config (id, label, tip, obligatorio, orden, contexto) VALUES (?,?,?,?,?,'vinculacion')`);
     docs.forEach(([id, label, tip, ob], i) => ins.run(id, label, tip, ob, i));
+  }
+
+  const extractoConfigCount = db.prepare('SELECT COUNT(*) n FROM extracto_config').get().n;
+  if (extractoConfigCount === 0) {
+    // Antioquia-Chocó (305) — domicilio de Transportes Multimodal Group S.A.S. Ajustar si la
+    // habilitación real de la empresa corresponde a otra Dirección Territorial o resolución.
+    db.prepare('INSERT INTO extracto_config (id, codigo_territorial, numero_resolucion_habilitacion, anio_habilitacion, tolerancia_mant_defensivo_dias) VALUES (1, ?, ?, ?, ?)')
+      .run('305', '0010', '13', 10);
   }
 }
 
