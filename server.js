@@ -116,6 +116,19 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json(user);
 });
 
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Faltan campos' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'La contraseña nueva debe tener al menos 8 caracteres' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+  if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
+    return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+  }
+  const hash = bcrypt.hashSync(newPassword, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  res.status(204).end();
+});
+
 // ───────────────────────── Dashboard ─────────────────────────
 app.get('/api/dashboard/resumen', requireAuth, (req, res) => {
   const docsVencidos = db
