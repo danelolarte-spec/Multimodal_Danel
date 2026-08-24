@@ -748,7 +748,7 @@ app.put('/api/extracto-config', requireRole('admin'), (req, res) => {
 app.get('/api/extractos/clientes', requireAuth, (req, res) => {
   res.json(db.prepare('SELECT * FROM extracto_clientes ORDER BY nombre').all());
 });
-app.post('/api/extractos/clientes', requireRole('admin', 'tramites'), (req, res) => {
+app.post('/api/extractos/clientes', requireRole('admin', 'tramites', 'comercial'), (req, res) => {
   const id = req.body.id || newId('ecl');
   const cols = ['nombre', 'documento', 'direccion', 'telefono', 'email'];
   const row = Object.fromEntries(cols.map((c) => [c, req.body[c] ?? null]));
@@ -758,7 +758,7 @@ app.post('/api/extractos/clientes', requireRole('admin', 'tramites'), (req, res)
   db.prepare(`INSERT INTO extracto_clientes (id, ${cols.join(',')}, es_icbf, es_corporativo) VALUES (@id, ${cols.map((c) => '@' + c).join(',')}, @es_icbf, @es_corporativo)`).run(row);
   res.status(201).json(db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(id));
 });
-app.put('/api/extractos/clientes/:id', requireRole('admin', 'tramites'), (req, res) => {
+app.put('/api/extractos/clientes/:id', requireRole('admin', 'tramites', 'comercial'), (req, res) => {
   const cols = ['nombre', 'documento', 'direccion', 'telefono', 'email'];
   const present = cols.filter((c) => c in req.body);
   const body = { ...req.body, id: req.params.id };
@@ -770,10 +770,28 @@ app.put('/api/extractos/clientes/:id', requireRole('admin', 'tramites'), (req, r
   res.json(c);
 });
 
+// Tarifario comercial de un cliente (tipo de servicio + tipo de vehículo -> valor cobrado / pago al afiliado)
+app.get('/api/extractos/clientes/:id/tarifario', requireAuth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM tarifario_items WHERE cliente_id=? ORDER BY orden').all(req.params.id));
+});
+app.put('/api/extractos/clientes/:id/tarifario', requireRole('admin', 'tramites', 'comercial'), (req, res) => {
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM tarifario_items WHERE cliente_id=?').run(req.params.id);
+    const ins = db.prepare(`INSERT INTO tarifario_items
+      (cliente_id, tipo_servicio, tipo_vehiculo, origen, destino, valor_servicio, pago_afiliado, orden)
+      VALUES (?,?,?,?,?,?,?,?)`);
+    items.forEach((it, i) => ins.run(req.params.id, it.tipoServicio, it.tipoVehiculo, it.origen || null, it.destino || null, +it.valorServicio || 0, +it.pagoAfiliado || 0, i));
+  });
+  tx();
+  res.json(db.prepare('SELECT * FROM tarifario_items WHERE cliente_id=? ORDER BY orden').all(req.params.id));
+});
+
 // Contratos (flujo de aprobación)
 function contratoConDetalle(k) {
   const cliente = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(k.cliente_id);
-  return { ...k, cliente };
+  const historial = db.prepare('SELECT * FROM extracto_contrato_historial WHERE contrato_id=? ORDER BY id').all(k.id);
+  return { ...k, cliente, historial };
 }
 app.get('/api/extractos/contratos', requireAuth, (req, res) => {
   let sql = 'SELECT * FROM extracto_contratos';
@@ -782,10 +800,10 @@ app.get('/api/extractos/contratos', requireAuth, (req, res) => {
   sql += ' ORDER BY created_at DESC';
   res.json(db.prepare(sql).all(...params).map(contratoConDetalle));
 });
-app.post('/api/extractos/contratos', requireRole('admin', 'tramites', 'operaciones'), (req, res) => {
+app.post('/api/extractos/contratos', requireRole('admin', 'tramites', 'operaciones', 'comercial'), (req, res) => {
   const cliente = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(req.body.clienteId);
   if (!cliente) return res.status(400).json({ error: 'Cliente no encontrado' });
-  // Restricciones de creación según el tipo de cliente (Área de Trámites para ICBF; Trámites/Operaciones para corporativos)
+  // Restricciones de creación según el tipo de cliente (Área de Trámites para ICBF; Trámites/Operaciones/Comercial para corporativos)
   if (cliente.es_icbf && !['admin', 'tramites'].includes(req.session.rol)) {
     return res.status(403).json({ error: 'Solo el Área de Trámites puede crear contratos ICBF' });
   }
@@ -798,32 +816,50 @@ app.post('/api/extractos/contratos', requireRole('admin', 'tramites', 'operacion
   }
   const id = newId('ekt');
   const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  // Si ya se adjunta el contrato firmado al crearlo (ej. módulo Comercial), se salta el paso de
+  // "pendiente de firma" y queda directamente pendiente de validación por Trámites.
+  const estadoInicial = req.body.archivoFirmadoUrl ? 'PENDIENTE_VALIDACION' : 'PENDIENTE_FIRMA';
   const tx = db.transaction(() => {
     const numero = (db.prepare('SELECT COALESCE(MAX(numero),0) n FROM extracto_contratos').get().n) + 1;
     db.prepare(`INSERT INTO extracto_contratos
-      (id, numero, cliente_id, modalidad, objeto, origen, destino, fecha_inicio, fecha_fin, requiere_convenio, convenio_colaboracion, estado, creado_por)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDIENTE_FIRMA',?)`)
+      (id, numero, cliente_id, modalidad, objeto, origen, destino, fecha_inicio, fecha_fin, requiere_convenio, convenio_colaboracion, estado, archivo_firmado_url, creado_por)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, numero, req.body.clienteId, req.body.modalidad, req.body.objeto || null, req.body.origen || null, req.body.destino || null,
-        req.body.fechaInicio || null, req.body.fechaFin || null, req.body.requiereConvenio ? 1 : 0, req.body.convenioColaboracion || null, usuario);
+        req.body.fechaInicio || null, req.body.fechaFin || null, req.body.requiereConvenio ? 1 : 0, req.body.convenioColaboracion || null,
+        estadoInicial, req.body.archivoFirmadoUrl || null, usuario);
+    const accionInicial = estadoInicial === 'PENDIENTE_VALIDACION' ? 'Contrato creado con firma adjunta — solicitud de verificación enviada a Trámites' : 'Contrato creado';
+    db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion) VALUES (?,?,?)").run(id, usuario, accionInicial);
   });
   tx();
   res.status(201).json(contratoConDetalle(db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(id)));
 });
-app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operaciones'), (req, res) => {
+const CONTRATO_ESTADO_LABEL = {
+  PENDIENTE_FIRMA: 'Pendiente de firma', PENDIENTE_VALIDACION: 'Pendiente validación',
+  APROBADO: 'Aprobado', DEVUELTO: 'Devuelto', RECHAZADO: 'Rechazado',
+};
+app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operaciones', 'comercial'), (req, res) => {
   const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(req.params.id);
   if (!contrato) return res.status(404).json({ error: 'No encontrado' });
   const cols = ['objeto', 'origen', 'destino', 'fecha_inicio', 'fecha_fin', 'convenio_colaboracion', 'archivo_firmado_url'];
   const present = cols.filter((c) => c in req.body);
   const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
   const body = { ...req.body, id: req.params.id };
-  if (present.length) db.prepare(`UPDATE extracto_contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
-  if (req.body.estado) {
-    const validas = ['PENDIENTE_FIRMA', 'PENDIENTE_VALIDACION', 'APROBADO', 'DEVUELTO', 'RECHAZADO'];
-    if (!validas.includes(req.body.estado)) return res.status(400).json({ error: 'Estado inválido' });
-    const validadoPor = ['APROBADO', 'DEVUELTO', 'RECHAZADO'].includes(req.body.estado) ? usuario : contrato.validado_por;
-    db.prepare('UPDATE extracto_contratos SET estado=?, motivo_devolucion=?, validado_por=? WHERE id=?')
-      .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
-  }
+  const tx = db.transaction(() => {
+    if (present.length) db.prepare(`UPDATE extracto_contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+    if (req.body.archivo_firmado_url && contrato.estado === 'PENDIENTE_FIRMA') {
+      db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion) VALUES (?,?,'Contrato firmado cargado')").run(req.params.id, usuario);
+    }
+    if (req.body.estado) {
+      const validas = ['PENDIENTE_FIRMA', 'PENDIENTE_VALIDACION', 'APROBADO', 'DEVUELTO', 'RECHAZADO'];
+      if (!validas.includes(req.body.estado)) throw Object.assign(new Error('Estado inválido'), { status: 400 });
+      const validadoPor = ['APROBADO', 'DEVUELTO', 'RECHAZADO'].includes(req.body.estado) ? usuario : contrato.validado_por;
+      db.prepare('UPDATE extracto_contratos SET estado=?, motivo_devolucion=?, validado_por=? WHERE id=?')
+        .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
+      db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion, nota) VALUES (?,?,?,?)")
+        .run(req.params.id, usuario, `Cambió estado a: ${CONTRATO_ESTADO_LABEL[req.body.estado] || req.body.estado}`, req.body.motivoDevolucion || '');
+    }
+  });
+  try { tx(); } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
   res.json(contratoConDetalle(db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(req.params.id)));
 });
 

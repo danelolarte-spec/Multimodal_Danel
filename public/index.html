@@ -17429,6 +17429,15 @@ function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
         )
       ),
       contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
+      rc('div', { className: 'mt3' },
+        rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Historial'),
+        (contrato.historial || []).map(hi => rc('div', { key: hi.id, className: 'tl-item' },
+          rc('div', { className: 'tl-dot' }),
+          rc('div', { className: 'tl-body' },
+            rc('div', { className: 'tl-meta' }, rc('span', { className: 'tl-user' }, hi.usuario), rc('span', { className: 'tl-date' }, hi.fecha)),
+            rc('div', { className: 'tl-action' }, hi.accion),
+            hi.nota && rc('div', { className: 'tl-note' }, hi.nota))))
+      ),
     ),
     rc('div', { className: 'mf' }, rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar')),
     rc(GenerarContratoDocModal, { contrato, open: showGenerarDoc, onClose: () => setShowGenerarDoc(false), toast })
@@ -22416,11 +22425,324 @@ function OperacionesApp({ onBack }) {
   );
 }
 
+// ══════════════════════ MÓDULO COMERCIAL ══════════════════════
+// Alta de clientes corporativos: datos + contrato firmado + tarifario por servicio/vehículo.
+// Al crearse quedan como clientes corporativos y su contrato entra directo a validación de
+// Trámites (misma lógica de aprobación del submódulo Extractos — ver docs/BACKEND_DESIGN.md §9).
+const CLASES_VEHICULO_COM = ['Automóvil', 'Campero', 'Van', 'Microbús', 'Bus'];
+
+function TarifarioTabla({ items, setItems }) {
+  function addRow() {
+    setItems(p => [...p, { tipoServicio: Object.keys(PRODUCTOS_SERVICIO)[0], tipoVehiculo: CLASES_VEHICULO_COM[0], origen: '', destino: '', valorServicio: '', pagoAfiliado: '' }]);
+  }
+  function updateRow(i, patch) {
+    setItems(p => p.map((r, j) => j === i ? { ...r, ...patch } : r));
+  }
+  function removeRow(i) {
+    setItems(p => p.filter((_, j) => j !== i));
+  }
+  return rc('div', { className: 'tw' },
+    rc('table', null,
+      rc('thead', null, rc('tr', null,
+        rc('th', null, 'Tipo de servicio'), rc('th', null, 'Tipo de vehículo'), rc('th', null, 'Origen'),
+        rc('th', null, 'Destino'), rc('th', null, 'Valor al cliente'), rc('th', null, 'Pago afiliado/convenio'), rc('th', null))),
+      rc('tbody', null,
+        items.length === 0 ? rc('tr', null, rc('td', { colSpan: 7 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin filas — agrega al menos una tarifa')))) :
+        items.map((r, i) => rc('tr', { key: i },
+          rc('td', null, rc('select', { className: 'fsel', value: r.tipoServicio, onChange: e => updateRow(i, { tipoServicio: e.target.value }) },
+            Object.entries(PRODUCTOS_SERVICIO).map(([k, v]) => rc('option', { key: k, value: k }, v.label)))),
+          rc('td', null, rc('select', { className: 'fsel', value: r.tipoVehiculo, onChange: e => updateRow(i, { tipoVehiculo: e.target.value }) },
+            CLASES_VEHICULO_COM.map(c => rc('option', { key: c, value: c }, c)))),
+          rc('td', null, rc('input', { className: 'fi', style: { minWidth: 100 }, value: r.origen, placeholder: 'Opcional', onChange: e => updateRow(i, { origen: e.target.value }) })),
+          rc('td', null, rc('input', { className: 'fi', style: { minWidth: 100 }, value: r.destino, placeholder: 'Opcional', onChange: e => updateRow(i, { destino: e.target.value }) })),
+          rc('td', null, rc('input', { className: 'fi', style: { minWidth: 110 }, type: 'number', value: r.valorServicio, onChange: e => updateRow(i, { valorServicio: e.target.value }) })),
+          rc('td', null, rc('input', { className: 'fi', style: { minWidth: 110 }, type: 'number', value: r.pagoAfiliado, onChange: e => updateRow(i, { pagoAfiliado: e.target.value }) })),
+          rc('td', null, rc('button', { className: 'btn btn-xs bd', onClick: () => removeRow(i) }, '✕'))
+        ))
+      )
+    ),
+    rc('button', { className: 'btn bs btn-sm mt2', onClick: addRow }, '+ Agregar fila')
+  );
+}
+
+function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
+  const [nombre, setNombre] = React.useState('');
+  const [documento, setDocumento] = React.useState('');
+  const [direccion, setDireccion] = React.useState('');
+  const [telefono, setTelefono] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [objeto, setObjeto] = React.useState('');
+  const [origen, setOrigen] = React.useState('');
+  const [destino, setDestino] = React.useState('');
+  const [fechaInicio, setFechaInicio] = React.useState('');
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [archivoFirmado, setArchivoFirmado] = React.useState(null);
+  const [tarifario, setTarifario] = React.useState([]);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  function reset() {
+    setNombre(''); setDocumento(''); setDireccion(''); setTelefono(''); setEmail('');
+    setObjeto(''); setOrigen(''); setDestino(''); setFechaInicio(''); setFechaFin('');
+    setArchivoFirmado(null); setTarifario([]); setError('');
+  }
+  function close() { reset(); onClose(); }
+
+  function leerArchivo(file) {
+    if (!file) { setArchivoFirmado(null); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => setArchivoFirmado({ url: reader.result, nombre: file.name });
+    reader.readAsDataURL(file);
+  }
+
+  async function crear() {
+    setError('');
+    if (!nombre.trim()) { setError('El nombre del cliente es obligatorio'); return; }
+    if (!fechaInicio || !fechaFin) { setError('La vigencia del contrato es obligatoria'); return; }
+    if (!archivoFirmado) { setError('Debes cargar el contrato firmado'); return; }
+    const filasIncompletas = tarifario.some(r => !r.valorServicio);
+    if (tarifario.length === 0) { setError('Agrega al menos una tarifa al tarifario'); return; }
+    if (filasIncompletas) { setError('Todas las filas del tarifario deben tener un valor para el cliente'); return; }
+    setLoading(true);
+    try {
+      const cliente = await extApiSend('POST', '/api/extractos/clientes', {
+        nombre, documento, direccion, telefono, email, es_corporativo: true,
+      });
+      const contrato = await extApiSend('POST', '/api/extractos/contratos', {
+        clienteId: cliente.id, modalidad: 'EMPRESARIAL', objeto, origen, destino,
+        fechaInicio, fechaFin, archivoFirmadoUrl: archivoFirmado.url,
+      });
+      await extApiSend('PUT', `/api/extractos/clientes/${cliente.id}/tarifario`, { items: tarifario });
+      toast(`Cliente "${nombre}" creado — contrato enviado a validación de Trámites`, 'success');
+      close();
+      onCreado();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return rc(Modal, { open, onClose: close, title: 'Nuevo cliente corporativo', lg: true },
+    rc('div', { className: 'mb' },
+      error && rc(Alert, { type: 'danger' }, error),
+      rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Datos del cliente'),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Nombre / Razón social *'),
+        rc('input', { className: 'fi', value: nombre, onChange: e => setNombre(e.target.value) })),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Cédula / NIT'),
+          rc('input', { className: 'fi', value: documento, onChange: e => setDocumento(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Teléfono'),
+          rc('input', { className: 'fi', value: telefono, onChange: e => setTelefono(e.target.value) })),
+      ),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Dirección'),
+          rc('input', { className: 'fi', value: direccion, onChange: e => setDireccion(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Correo electrónico'),
+          rc('input', { className: 'fi', type: 'email', value: email, onChange: e => setEmail(e.target.value) })),
+      ),
+      rc('div', { className: 'divider' }),
+      rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Contrato'),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Objeto del contrato'),
+        rc('input', { className: 'fi', value: objeto, onChange: e => setObjeto(e.target.value) })),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
+          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
+          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
+      ),
+      rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha inicio *'),
+          rc('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha fin * (máx. 1 año)'),
+          rc('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) })),
+      ),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Contrato firmado (PDF/imagen) *'),
+        rc('input', { type: 'file', onChange: e => leerArchivo(e.target.files[0]) }),
+        archivoFirmado && rc('div', { className: 'txs tmut mt2' }, `Cargado: ${archivoFirmado.nombre}`)),
+      rc(Alert, { type: 'info' }, 'Al crear el cliente, el contrato queda enviado como solicitud de verificación al Área de Trámites — solo podrán generarse extractos a nombre de este cliente cuando lo aprueben.'),
+      rc('div', { className: 'divider' }),
+      rc('div', { className: 'flex fjb', style: { alignItems: 'center', marginBottom: 8 } },
+        rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario aplicable al cliente'),
+      ),
+      rc(TarifarioTabla, { items: tarifario, setItems: setTarifario }),
+    ),
+    rc('div', { className: 'mf' },
+      rc('button', { className: 'btn bs', onClick: close }, 'Cancelar'),
+      rc('button', { className: 'btn bp', disabled: loading, onClick: crear }, loading ? 'Guardando…' : 'Crear cliente y enviar a validación')
+    )
+  );
+}
+
+function ClienteComercialDetalleModal({ cliente, open, onClose, toast }) {
+  const [contratos, setContratos] = React.useState([]);
+  const [tarifario, setTarifario] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!open || !cliente) return;
+    setLoading(true);
+    Promise.all([
+      extApiGet(`/api/extractos/contratos?clienteId=${cliente.id}`),
+      extApiGet(`/api/extractos/clientes/${cliente.id}/tarifario`),
+    ]).then(([k, t]) => { setContratos(k); setTarifario(t); }).catch(e => toast(e.message, 'danger')).finally(() => setLoading(false));
+  }, [open, cliente]);
+
+  if (!open || !cliente) return null;
+  const contrato = contratos[0];
+  const est = contrato ? (EXT_ESTADOS_CONTRATO[contrato.estado] || { label: contrato.estado, badge: 'bgr' }) : null;
+
+  return rc(Modal, { open, onClose, title: cliente.nombre, lg: true },
+    rc('div', { className: 'mb' },
+      loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) : rc(React.Fragment, null,
+        rc('div', { className: 'g2c' },
+          rc(IField, { label: 'Documento', value: cliente.documento }),
+          rc(IField, { label: 'Teléfono', value: cliente.telefono }),
+          rc(IField, { label: 'Dirección', value: cliente.direccion }),
+          rc(IField, { label: 'Correo', value: cliente.email }),
+        ),
+        contrato && rc('div', { className: 'mt3' },
+          rc('div', { className: 'flex fjb', style: { alignItems: 'center', marginBottom: 8 } },
+            rc('div', { className: 'ct', style: { fontSize: 12 } }, `Contrato ${contrato.numero}`),
+            rc('span', { className: `badge ${est.badge}` }, est.label)),
+          contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
+          rc('div', { className: 'g2c' },
+            rc(IField, { label: 'Vigencia', value: `${fmtD(contrato.fecha_inicio)} — ${fmtD(contrato.fecha_fin)}` }),
+            rc(IField, { label: 'Origen — Destino', value: `${contrato.origen || '—'} — ${contrato.destino || '—'}` }),
+          ),
+          contrato.archivo_firmado_url && rc('div', { className: 'doc-thumb', style: { marginTop: 8 }, onClick: () => window.open(contrato.archivo_firmado_url, '_blank') },
+            rc('div', { className: 'ic' }, '📎'), rc('div', null, rc('div', { className: 'fbold tsr' }, 'Contrato firmado'), rc('div', { className: 'txs tmut' }, 'Clic para ver')))
+        ),
+        rc('div', { className: 'mt3' },
+          rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Tarifario'),
+          rc('div', { className: 'tw' }, rc('table', null,
+            rc('thead', null, rc('tr', null, rc('th', null, 'Servicio'), rc('th', null, 'Vehículo'), rc('th', null, 'Origen'), rc('th', null, 'Destino'), rc('th', null, 'Valor cliente'), rc('th', null, 'Pago afiliado'))),
+            rc('tbody', null,
+              tarifario.length === 0 ? rc('tr', null, rc('td', { colSpan: 6 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin tarifas registradas')))) :
+              tarifario.map(t => rc('tr', { key: t.id },
+                rc('td', null, PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio),
+                rc('td', null, t.tipo_vehiculo),
+                rc('td', null, t.origen || '—'),
+                rc('td', null, t.destino || '—'),
+                rc('td', { className: 'tr fbold' }, fmt(t.valor_servicio)),
+                rc('td', { className: 'tr' }, fmt(t.pago_afiliado))
+              ))
+            )
+          ))
+        )
+      )
+    ),
+    rc('div', { className: 'mf' }, rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'))
+  );
+}
+
+function ComercialClientes({ toast }) {
+  const [clientes, setClientes] = React.useState([]);
+  const [contratosPorCliente, setContratosPorCliente] = React.useState({});
+  const [loading, setLoading] = React.useState(true);
+  const [showNuevo, setShowNuevo] = React.useState(false);
+  const [sel, setSel] = React.useState(null);
+
+  function refresh() {
+    return Promise.all([extApiGet('/api/extractos/clientes'), extApiGet('/api/extractos/contratos')])
+      .then(([cs, ks]) => {
+        setClientes(cs.filter(c => c.es_corporativo));
+        const byCliente = {};
+        ks.forEach(k => { if (!byCliente[k.cliente_id]) byCliente[k.cliente_id] = k; });
+        setContratosPorCliente(byCliente);
+      })
+      .catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  return rc('div', null,
+    rc('div', { className: 'flex fjb mb3' },
+      rc('div', { className: 'tsr tmut' }, `${clientes.length} clientes corporativos`),
+      rc('button', { className: 'btn bp btn-sm', onClick: () => setShowNuevo(true) }, '+ Nuevo cliente corporativo')
+    ),
+    loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) :
+    rc('div', { className: 'card' }, rc('div', { className: 'tw' }, rc('table', null,
+      rc('thead', null, rc('tr', null, rc('th', null, 'Cliente'), rc('th', null, 'Documento'), rc('th', null, 'Estado del contrato'), rc('th', null))),
+      rc('tbody', null,
+        clientes.length === 0 ? rc('tr', null, rc('td', { colSpan: 4 }, rc('div', { className: 'empty' },
+          rc('p', null, 'Sin clientes corporativos'), rc('p', { className: 'txs' }, 'Crea el primero con "+ Nuevo cliente corporativo"')))) :
+        clientes.map(c => {
+          const k = contratosPorCliente[c.id];
+          const est = k ? (EXT_ESTADOS_CONTRATO[k.estado] || { label: k.estado, badge: 'bgr' }) : { label: 'Sin contrato', badge: 'bgr' };
+          return rc('tr', { key: c.id },
+            rc('td', null, c.nombre),
+            rc('td', { className: 'tmono' }, c.documento || '—'),
+            rc('td', null, rc('span', { className: `badge ${est.badge}` }, est.label)),
+            rc('td', null, rc('button', { className: 'btn btn-sm bs', onClick: () => setSel(c) }, 'Ver'))
+          );
+        })
+      )
+    ))),
+    rc(NuevoClienteComercialModal, { open: showNuevo, onClose: () => setShowNuevo(false), toast, onCreado: refresh }),
+    rc(ClienteComercialDetalleModal, { cliente: sel, open: !!sel, onClose: () => setSel(null), toast })
+  );
+}
+
+function ComercialApp({ onBack }) {
+  const [mod, setMod] = useState('clientes');
+  const [theme, setTheme] = useState((document.documentElement.getAttribute('data-theme')) || 'light');
+  const { toasts, add: toast } = useToast();
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+
+  const TITLES_COM = {
+    clientes: { t: 'Clientes Corporativos', s: 'Alta de clientes, contrato firmado y tarifario' },
+  };
+  const MENU_COM = [
+    { id: 'clientes', label: 'Clientes', ico: '🤝' },
+  ];
+  const pg = TITLES_COM[mod] || {};
+  const ini = initials(USUARIO.nombre);
+
+  function renderMod() {
+    switch (mod) {
+      case 'clientes':
+      default: return h(ComercialClientes, { toast: toast });
+    }
+  }
+
+  return h('div', { className: 'app' },
+    h('aside', { className: 'sb' },
+      h('div', { className: 'sb-logo' },
+        h('div', { className: 'co' }, 'Multimodal Group S.A.S.'),
+        h('div', { className: 'sy' }, 'PIG — Comercial'),
+        h('div', { className: 've' }, 'Clientes · Contratos · Tarifarios')
+      ),
+      h('nav', { style: { flex: 1, paddingBottom: 8, paddingTop: 8 } },
+        MENU_COM.map(m => h('button', {
+          key: m.id, className: `nav-item ${mod === m.id ? 'act' : ''}`, onClick: () => setMod(m.id)
+        }, h('span', { style: { fontSize: 15 } }, m.ico), h('span', { style: { flex: 1, textAlign: 'left' } }, m.label)))
+      ),
+      h('div', { className: 'sb-user', style: { flexDirection: 'column', alignItems: 'stretch', gap: 10 } },
+        h('button', { className: 'btn bs btn-sm', style: { width: '100%', justifyContent: 'center' }, onClick: onBack }, '← Panel Principal'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('div', { className: 'av' }, ini),
+          h('div', null, h('div', { className: 'un' }, USUARIO.nombre), h('div', { className: 'ur' }, 'Módulo Comercial'))
+        )
+      )
+    ),
+    h('div', { className: 'main' },
+      h('header', { className: 'topbar' },
+        h('div', null, h('div', { className: 'tb-title' }, pg.t), pg.s && h('div', { className: 'tb-sub' }, pg.s)),
+        h('div', { className: 'tb-act' },
+          h('button', { className: 'theme-toggle', onClick: () => setTheme(t => t === 'light' ? 'dark' : 'light') }, theme === 'light' ? '🌙 Oscuro' : '☀️ Claro')
+        )
+      ),
+      h('main', { className: 'content' }, renderMod())
+    ),
+    h(Toasts, { toasts: toasts })
+  );
+}
+
 function HomeERP({ onEnter }) {
   const MODULOS = [
     { id: 'flota', label: 'Trámites y Control de Flota', ico: '🚛', activo: true, desc: 'Vehículos, conductores, trámites, cartera y documentación.' },
     { id: 'operaciones', label: 'Operaciones', ico: '⚙️', activo: true, desc: 'Contratos, servicios, despacho y producción.' },
-    { id: 'comercial', label: 'Comercial', ico: '📈', activo: false, desc: 'Próximamente' },
+    { id: 'comercial', label: 'Comercial', ico: '📈', activo: true, desc: 'Clientes corporativos, contratos y tarifarios.' },
     { id: 'slot4', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
     { id: 'slot5', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
     { id: 'slot6', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
@@ -22718,6 +23040,9 @@ function App() {
   }
   if (topMod === 'operaciones') {
     return React.createElement(OperacionesApp, { onBack: () => { setShowHome(true); setTopMod(null); } });
+  }
+  if (topMod === 'comercial') {
+    return React.createElement(ComercialApp, { onBack: () => { setShowHome(true); setTopMod(null); } });
   }
   return /*#__PURE__*/React.createElement("div", {
     className: "app"

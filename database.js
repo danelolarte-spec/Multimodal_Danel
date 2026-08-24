@@ -329,6 +329,12 @@ CREATE TABLE IF NOT EXISTS extracto_contratos (
 );
 CREATE INDEX IF NOT EXISTS idx_extracto_contratos_cliente ON extracto_contratos(cliente_id);
 
+CREATE TABLE IF NOT EXISTS extracto_contrato_historial (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contrato_id TEXT NOT NULL REFERENCES extracto_contratos(id) ON DELETE CASCADE,
+  fecha TEXT NOT NULL DEFAULT (datetime('now')), usuario TEXT, accion TEXT, nota TEXT
+);
+
 -- Extractos generados (instancias del FUEC). Inmutables una vez creados (solo cambia estado por vencimiento/anulación).
 CREATE TABLE IF NOT EXISTS extractos (
   id TEXT PRIMARY KEY,
@@ -360,6 +366,21 @@ CREATE TABLE IF NOT EXISTS extracto_historial (
   extracto_id TEXT NOT NULL REFERENCES extractos(id) ON DELETE CASCADE,
   fecha TEXT NOT NULL DEFAULT (datetime('now')), usuario TEXT, accion TEXT, nota TEXT
 );
+
+-- Tarifario comercial: tarifa aplicable a un cliente por tipo de servicio + tipo de vehículo
+-- (y opcionalmente origen/destino), con el valor cobrado al cliente y lo que se le paga al
+-- afiliado/convenio por ese servicio. Lo crea el módulo Comercial al dar de alta un cliente.
+CREATE TABLE IF NOT EXISTS tarifario_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cliente_id TEXT NOT NULL REFERENCES extracto_clientes(id) ON DELETE CASCADE,
+  tipo_servicio TEXT NOT NULL,
+  tipo_vehiculo TEXT NOT NULL,
+  origen TEXT, destino TEXT,
+  valor_servicio INTEGER NOT NULL DEFAULT 0,
+  pago_afiliado INTEGER NOT NULL DEFAULT 0,
+  orden INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tarifario_cliente ON tarifario_items(cliente_id);
 `);
 
 function seedIfEmpty() {

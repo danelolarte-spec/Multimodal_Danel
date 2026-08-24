@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -168,3 +168,39 @@ Cubre así el control de vigencias (la vigencia del extracto nunca puede superar
 - Plantilla de contrato para modalidad **Empresarial** (no se entregó un formato de referencia).
 - Número de Tarjeta de Operación del vehículo: la columna existe (`vehiculos.numero_tarjeta_operacion`) y la API ya la acepta, pero no hay campo en el formulario de Vehículos para editarla — hoy solo se puede fijar llamando a la API directamente.
 - Carga real de archivos para el contrato firmado (hoy queda como `data:` URL en la base de datos vía `FileReader`, funcional pero no ideal a gran escala — ver §7).
+
+## 9. Módulo Comercial — completo end-to-end
+
+Reemplaza el slot "Comercial" (antes deshabilitado en `HomeERP`) por el módulo donde se dan de alta los clientes corporativos: cada cliente se crea con su contrato firmado y su tarifario, y queda pendiente de verificación en Trámites antes de poder generar extractos a su nombre. No duplica infraestructura: reutiliza `extracto_clientes`/`extracto_contratos` (§8), la misma bandera `es_corporativo` y el mismo flujo de aprobación de contrato que ya usa Extractos.
+
+### 9.1 Modelo de datos nuevo
+
+- `tarifario_items` — filas del tarifario de un cliente (`cliente_id → extracto_clientes`): tipo de servicio, tipo de vehículo, origen/destino opcionales, valor del servicio en pesos, pago a afiliados/convenios por ese servicio, y `orden` para mantener el orden de la tabla editable. Se reemplaza por completo en cada guardado (`DELETE` + `INSERT` en una transacción), no hay historial de versiones del tarifario.
+- `extracto_contrato_historial` — bitácora por contrato (`contrato_id → extracto_contratos`): quién hizo qué y cuándo (creación, carga de firma, cambios de estado con motivo). Se muestra en el detalle del contrato tanto en Comercial como en Trámites.
+
+### 9.2 Flujo cliente → contrato → verificación
+
+1. Comercial (o Trámites/admin) crea el cliente (`POST /api/extractos/clientes`, ahora con rol `comercial` habilitado) marcado `es_corporativo: true` — le aplica la misma restricción que a los demás clientes corporativos (bloqueado para que un afiliado genere extractos a su nombre, §8.3 punto 4).
+2. En el mismo flujo se guarda el tarifario (`PUT /api/extractos/clientes/:id/tarifario`, modo tabla — reemplaza todas las filas) y se crea el contrato adjuntando de una vez el archivo firmado.
+3. Si el contrato se crea **con** `archivoFirmadoUrl` ya adjunto (el caso normal desde Comercial: el cliente ya llega con el contrato firmado), `POST /api/extractos/contratos` salta directo a `PENDIENTE_VALIDACION` en vez de `PENDIENTE_FIRMA` — esa es la "solicitud de verificación" que le llega a Trámites. El historial registra `"Contrato creado con firma adjunta — solicitud de verificación enviada a Trámites"`.
+4. Trámites revisa el contrato (mismo flujo/pestaña "Contratos" de Extractos, §8.5) y lo mueve a `APROBADO`, `DEVUELTO` (con motivo) o `RECHAZADO` vía `PUT /api/extractos/contratos/:id`. Solo con `estado = APROBADO` el motor de validación (§8.3, paso 1) permite generar extractos a nombre de ese cliente.
+
+### 9.3 Endpoints nuevos
+
+| Método y ruta | Notas |
+|---|---|
+| `GET /api/extractos/clientes/:id/tarifario` | Lista el tarifario del cliente, ordenado. |
+| `PUT /api/extractos/clientes/:id/tarifario` | Reemplaza el tarifario completo (`items: [...]`). Roles `admin`/`tramites`/`comercial`. |
+
+Además, `POST/PUT /api/extractos/clientes` y `POST /api/extractos/contratos` ahora aceptan el rol `comercial` (antes solo `admin`/`tramites`); `PUT /api/extractos/contratos/:id` también.
+
+### 9.4 Frontend
+
+- `ComercialApp` (nuevo, en `public/index.html`) — listado de clientes con badge de estado del contrato (pendiente de firma / pendiente de validación / aprobado / devuelto / rechazado), alta de cliente con formulario + tarifario en modo tabla (`TarifarioTabla`, filas editables con los mismos catálogos de tipo de servicio/vehículo que usa Operaciones) y carga del contrato firmado.
+- El detalle de contrato en Trámites (Extractos → Contratos) ahora muestra el historial (`extracto_contrato_historial`) con usuario, fecha, acción y nota de cada cambio de estado.
+- Rol `comercial`: ya estaba anticipado en el esquema (comentarios desde las primeras migraciones) pero no tenía módulo asociado; este es el primero que lo usa.
+
+### 9.5 Pendiente
+
+- El tarifario no valida contra duplicados (misma combinación tipo de servicio + tipo de vehículo + origen/destino dos veces) — se guarda tal cual se ingresa.
+- No hay todavía un uso automático del tarifario al generar servicios/extractos (por ahora es solo referencia informativa del contrato comercial, no alimenta el cálculo de valores en Operaciones/Extractos).

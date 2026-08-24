@@ -27,7 +27,7 @@ Ver [`docs/DEPLOY.md`](docs/DEPLOY.md) — despliegue en Render con disco persis
   - `Google Maps JavaScript API` — con **API key placeholder** (`TU_API_KEY_DE_GOOGLE_MAPS`), ver sección de integraciones pendientes.
   - Google Fonts (Space Grotesk, Inter, JetBrains Mono) — por CDN, con fallback a fuentes del sistema si no cargan.
 - **Backend**: Node.js + Express + SQLite (`better-sqlite3`) + sesiones (`express-session`/`bcryptjs`). API REST real con autenticación por rol. Ver diseño completo y catálogo de endpoints en [`docs/BACKEND_DESIGN.md`](docs/BACKEND_DESIGN.md).
-- **Persistencia**: SQLite (`data.sqlite`, no versionado; en producción vive en el disco persistente de Render). **El frontend ya está conectado a la API real** para Autenticación, Vehículos, Conductores, Cartera y el submódulo completo de Extractos (FUEC) — los cambios que se hacen ahí se guardan en el servidor y los ve cualquier usuario, en cualquier computador, que entre a la misma URL (verificado con pruebas automatizadas simulando dos sesiones/computadores distintos). El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Renovaciones mensuales, Solicitudes, Operaciones) todavía usan datos de ejemplo en memoria del navegador — la API para todos ellos ya existe, falta repetir el mismo patrón de conexión (`docs/BACKEND_DESIGN.md` §5).
+- **Persistencia**: SQLite (`data.sqlite`, no versionado; en producción vive en el disco persistente de Render). **El frontend ya está conectado a la API real** para Autenticación, Vehículos, Conductores, Cartera, el submódulo completo de Extractos (FUEC) y el módulo Comercial — los cambios que se hacen ahí se guardan en el servidor y los ve cualquier usuario, en cualquier computador, que entre a la misma URL (verificado con pruebas automatizadas simulando dos sesiones/computadores distintos). El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Renovaciones mensuales, Solicitudes, Operaciones) todavía usan datos de ejemplo en memoria del navegador — la API para todos ellos ya existe, falta repetir el mismo patrón de conexión (`docs/BACKEND_DESIGN.md` §5).
 
 ## Estructura del repo
 
@@ -50,7 +50,8 @@ public/
 
 - **Trámites y Control de Flota** (activo) — el módulo principal, historia de PIG-Trámites.
 - **Operaciones** (activo) — `OperacionesApp`, submenú independiente con su propio sidebar.
-- Comercial y otros 8 "slots" — reservados/deshabilitados, pensados como puntos de extensión para módulos futuros.
+- **Comercial** (activo) — `ComercialApp`, alta de clientes corporativos con contrato firmado y tarifario (modo tabla); ver §9 de `docs/BACKEND_DESIGN.md`.
+- Otros 8 "slots" — reservados/deshabilitados, pensados como puntos de extensión para módulos futuros.
 
 ### Módulo "Trámites y Control de Flota" (sidebar principal, `MENU` ~línea 19365)
 
@@ -60,7 +61,7 @@ public/
 | Flota de Vehículos | `Vehiculos` | Vehículos y su documentación (SOAT, tecnomecánica, tarjeta de operación, etc.) |
 | Conductores | `Conductores` | Habilitación, documentos, seguridad social |
 | Gestión de Trámites | `GestionTramites` | Vinculaciones, desvinculaciones, operativos |
-| Extractos (FUEC) | `Extractos` | Formato Único de Extracto del Contrato (Resolución 6652/2019) — clientes, contratos con flujo de firma/aprobación, generación del FUEC con validaciones normativas, QR de verificación pública, duplicación e historial. Único módulo nuevo ya conectado 100% a la API real; ver `docs/BACKEND_DESIGN.md` §8. |
+| Extractos (FUEC) | `Extractos` | Formato Único de Extracto del Contrato (Resolución 6652/2019) — clientes, contratos con flujo de firma/aprobación, generación del FUEC con validaciones normativas, QR de verificación pública, duplicación e historial. Ya conectado 100% a la API real; ver `docs/BACKEND_DESIGN.md` §8. |
 | Infracciones VIGÍA | `Infracciones` | Control de comparendos/infracciones |
 | Cartera Afiliados | `Cartera` | Obligaciones y cobros a afiliados |
 | Pólizas y Siniestros | `Polizas` | Seguros, reclamaciones (`RAMOS_POLIZA`, `ESTADOS_RECLAMACION`) y flujos de siniestro configurables (`FlujosEditor`) |
@@ -91,6 +92,10 @@ public/
 
 **`EcservisEngine`** (~línea 20831) es el punto más "vivo" del prototipo: inyecta su propio CSS/HTML (`ECW_CSS`, `ECW_BODY_HTML`) y ejecuta un script de motor (`ECSERVIS_ENGINE_SRC`) vía `new Function(...)` una vez Leaflet está cargado. Es el candidato natural para conectarse a un backend de despacho/tracking real (asignación de vehículos, GPS, etc.).
 
+### Módulo "Comercial" (`ComercialApp`)
+
+Reutiliza los clientes/contratos de Extractos (§8 de `docs/BACKEND_DESIGN.md`) en vez de duplicar infraestructura. Alta de cliente corporativo con: contrato firmado (adjunto de una vez), tarifario aplicable en modo tabla editable (tipo de servicio, tipo de vehículo, origen/destino opcionales, valor del servicio en pesos, pago a afiliados/convenios), y envío automático de una solicitud de verificación a Trámites (el contrato entra directo en `PENDIENTE_VALIDACION`) para que se revise y apruebe antes de poder generar extractos a nombre de ese cliente. Detalle completo en `docs/BACKEND_DESIGN.md` §9.
+
 ### Componentes UI compartidos
 `Alert`, `Modal`, `Tabs`, `Stepper`, `Toasts`/`useToast`, `PBar` (barra de progreso), `Sem` (semáforo de estado), `DocBadge`, `IField`, `FG` (form group), `AddressField`/`ParadasField` (integran con Google Maps Places cuando hay API key).
 
@@ -98,7 +103,7 @@ public/
 
 **Backend**: modelo de datos persistente completo en SQLite (`database.js`) con API REST (`server.js`) — ver `docs/BACKEND_DESIGN.md`.
 
-**Frontend**: `AuthGate` (pantalla de login real, ver el final de `index.html`) valida sesión contra `/api/auth/me` y, tras iniciar sesión, carga Vehículos y Conductores desde la API antes de mostrar la app — de ahí en adelante `USUARIO` refleja al usuario real de la sesión, no una constante fija. Los módulos de Vehículos, Conductores y Cartera guardan cada cambio (documentos, pagos, restricciones, altas) contra el servidor mediante las funciones `sync*` en `index.html` (`syncVehiculoUpdate`, `syncConductorFields`, etc. — buscar `credentials: 'same-origin'` para ubicarlas todas), manteniendo el mismo patrón síncrono de "store" que ya tenían para no tocar el resto de los componentes. El submódulo **Extractos (FUEC)** (`docs/BACKEND_DESIGN.md` §8) es autocontenido y usa `fetch` directo con `useEffect`/`useState` en vez de ese patrón "store", porque no lo consultan otros componentes de forma síncrona. El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Renovaciones mensuales, Solicitudes/Portal de afiliación, Operaciones) siguen usando `useState` con arreglos de ejemplo (`infracciones0`, `polizas0`, etc.) — la API para todos ellos ya existe, falta aplicar el mismo patrón de conexión módulo por módulo.
+**Frontend**: `AuthGate` (pantalla de login real, ver el final de `index.html`) valida sesión contra `/api/auth/me` y, tras iniciar sesión, carga Vehículos y Conductores desde la API antes de mostrar la app — de ahí en adelante `USUARIO` refleja al usuario real de la sesión, no una constante fija. Los módulos de Vehículos, Conductores y Cartera guardan cada cambio (documentos, pagos, restricciones, altas) contra el servidor mediante las funciones `sync*` en `index.html` (`syncVehiculoUpdate`, `syncConductorFields`, etc. — buscar `credentials: 'same-origin'` para ubicarlas todas), manteniendo el mismo patrón síncrono de "store" que ya tenían para no tocar el resto de los componentes. Los submódulos **Extractos (FUEC)** (`docs/BACKEND_DESIGN.md` §8) y **Comercial** (`docs/BACKEND_DESIGN.md` §9) son autocontenidos y usan `fetch` directo con `useEffect`/`useState` en vez de ese patrón "store", porque no los consultan otros componentes de forma síncrona. El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Renovaciones mensuales, Solicitudes/Portal de afiliación, Operaciones) siguen usando `useState` con arreglos de ejemplo (`infracciones0`, `polizas0`, etc.) — la API para todos ellos ya existe, falta aplicar el mismo patrón de conexión módulo por módulo.
 
 ## Integraciones pendientes / puntos de extensión
 
@@ -107,7 +112,7 @@ public/
 3. **Google Maps** — la API key es un placeholder (`TU_API_KEY_DE_GOOGLE_MAPS`, línea 15 de `index.html`). Sin ella, `AddressField`/`ParadasField` funcionan como texto libre, sin autocompletar ni geolocalizar. Se recomienda mover la key a una variable de entorno inyectada por el servidor en vez de dejarla hardcodeada en el HTML.
 4. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
 5. **Exportación/importación Excel** — ya integrada vía SheetJS (`xlsx`), reutilizable para nuevas integraciones de reportes.
-6. **Módulos reservados** — el `HomeERP` ya contempla un módulo "Comercial" y varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio.
+6. **Módulos reservados** — el `HomeERP` todavía tiene varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio (Comercial ya dejó de ser uno de ellos, ver §9 de `docs/BACKEND_DESIGN.md`).
 7. **Sesiones persistentes entre reinicios** — `express-session` usa almacenamiento en memoria; un redeploy cierra la sesión de todos los usuarios (los datos no se pierden, solo el login). Ver `docs/DEPLOY.md`.
 
 ## Notas para seguir desarrollando
