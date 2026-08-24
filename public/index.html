@@ -4,9 +4,9 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>PIG — Trámites | Transportes Multimodal Group</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/xlsx.full.min.js"></script>
 <!--
   GOOGLE MAPS: reemplaza TU_API_KEY_DE_GOOGLE_MAPS por una API Key real de Google Cloud
   con las librerías "Places" y "Maps JavaScript API" habilitadas y con dominio autorizado.
@@ -414,18 +414,66 @@ const vehiculos0 = [{
   }
 }];
 
+// ── Store de vehículos respaldado por la API real (/api/vehiculos) ──
+// getVehiculosStore() sigue siendo síncrono (muchos componentes lo llaman así);
+// loadVehiculosStore() lo puebla una vez desde el servidor antes de mostrar la app.
 let _vehiculosStore = null;
 function getVehiculosStore() {
-  if (!_vehiculosStore) _vehiculosStore = vehiculos0.map(function(v){ return Object.assign({}, v); });
+  if (!_vehiculosStore) _vehiculosStore = [];
+  return _vehiculosStore;
+}
+async function loadVehiculosStore() {
+  const res = await fetch('/api/vehiculos', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error('No se pudieron cargar los vehículos');
+  _vehiculosStore = await res.json();
   return _vehiculosStore;
 }
 function updateVehiculo(id, upd) {
-  if (!_vehiculosStore) _vehiculosStore = vehiculos0.map(function(v){ return Object.assign({}, v); });
+  if (!_vehiculosStore) _vehiculosStore = [];
   _vehiculosStore = _vehiculosStore.map(function(v){ return v.id === id ? Object.assign({}, v, upd) : v; });
+  syncVehiculoUpdate(id, upd);
 }
 function addVehiculoStore(v) {
-  if (!_vehiculosStore) _vehiculosStore = vehiculos0.map(function(x){ return Object.assign({}, x); });
+  if (!_vehiculosStore) _vehiculosStore = [];
   _vehiculosStore = [..._vehiculosStore, v];
+  syncVehiculoCreate(v);
+}
+const VEHICULO_COLS_PLANOS = ['placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','fechaVin'];
+const VEHICULO_COL_MAP = { fechaVin: 'fecha_vin' };
+function syncVehiculoUpdate(id, upd) {
+  const plain = {};
+  VEHICULO_COLS_PLANOS.forEach(function(k){ if (k in upd) plain[VEHICULO_COL_MAP[k] || k] = upd[k]; });
+  if (upd.propietario) {
+    if ('nombre' in upd.propietario) plain.propietario_nombre = upd.propietario.nombre;
+    if ('documento' in upd.propietario) plain.propietario_documento = upd.propietario.documento;
+    if ('telefono' in upd.propietario) plain.propietario_telefono = upd.propietario.telefono;
+    if ('email' in upd.propietario) plain.propietario_email = upd.propietario.email;
+  }
+  if (upd.logHab) plain.log_habilitacion = JSON.stringify(upd.logHab);
+  const tasks = [];
+  if (Object.keys(plain).length) {
+    tasks.push(fetch('/api/vehiculos/' + id, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plain) }));
+  }
+  if (upd.documentos) {
+    Object.keys(upd.documentos).forEach(function(docTipo) {
+      const d = upd.documentos[docTipo];
+      tasks.push(fetch('/api/vehiculos/' + id + '/documentos/' + docTipo, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vencimiento: d.ven, estado: d.estado, archivoUrl: d.archivoUrl, archivoNombre: d.archivoNombre }) }));
+    });
+  }
+  Promise.all(tasks).catch(function(e){ console.error('Error guardando vehículo en el servidor', e); });
+}
+function syncVehiculoCreate(v) {
+  const body = { id: v.id, propietario_nombre: v.propietario?.nombre, propietario_documento: v.propietario?.documento, propietario_telefono: v.propietario?.telefono, propietario_email: v.propietario?.email };
+  VEHICULO_COLS_PLANOS.forEach(function(k){ body[VEHICULO_COL_MAP[k] || k] = v[k]; });
+  fetch('/api/vehiculos', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(res) {
+      if (!res.ok) throw new Error('No se pudo guardar el vehículo en el servidor');
+      return Promise.all(Object.keys(v.documentos || {}).map(function(docTipo) {
+        const d = v.documentos[docTipo];
+        return fetch('/api/vehiculos/' + v.id + '/documentos/' + docTipo, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vencimiento: d.ven, estado: d.estado }) });
+      }));
+    })
+    .catch(function(e){ console.error('Error creando vehículo en el servidor', e); });
 }
 
 const conductores0 = [{
@@ -2361,15 +2409,60 @@ const conductores0 = [{
     }]
 }];
 
-// ── Store mutable de conductores (permite agregar desde portal de afiliados) ──
+// ── Store de conductores respaldado por la API real (/api/conductores) ──
 let _conductoresStore = null;
 function getConductores() {
-  if (!_conductoresStore) _conductoresStore = conductores0.slice();
+  if (!_conductoresStore) _conductoresStore = [];
+  return _conductoresStore;
+}
+async function loadConductoresStore() {
+  const res = await fetch('/api/conductores', { credentials: 'same-origin' });
+  if (!res.ok) throw new Error('No se pudieron cargar los conductores');
+  _conductoresStore = await res.json();
   return _conductoresStore;
 }
 function addConductorAprobado(c) {
-  if (!_conductoresStore) _conductoresStore = conductores0.slice();
+  if (!_conductoresStore) _conductoresStore = [];
   _conductoresStore = [..._conductoresStore, c];
+  syncConductorCreate(c);
+}
+const CONDUCTOR_COLS_PLANOS = ['nombre','cedula','telefono','email','licencia','vehiculo','tipo','eps','arl','pensiones','activo','fechaVin'];
+const CONDUCTOR_COL_MAP = { vencLic: 'venc_licencia', vehiculo: 'vehiculo_id', fechaVin: 'fecha_vin' };
+function normalizeEmptyToNull(body) {
+  // '' en un campo de referencia (ej. vehiculo_id) rompe la FK en SQLite; el resto de
+  // strings vacíos se dejan tal cual porque son válidos para campos de texto normales.
+  if (body.vehiculo_id === '') body.vehiculo_id = null;
+  return body;
+}
+function syncConductorFields(id, fields) {
+  const body = {};
+  Object.keys(fields).forEach(function(k) { body[CONDUCTOR_COL_MAP[k] || k] = fields[k]; });
+  normalizeEmptyToNull(body);
+  fetch('/api/conductores/' + id, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .catch(function(e){ console.error('Error guardando conductor en el servidor', e); });
+}
+function syncConductorDoc(id, tipo, doc) {
+  fetch('/api/conductores/' + id + '/documentos/' + tipo, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) })
+    .catch(function(e){ console.error('Error guardando documento del conductor', e); });
+}
+function syncConductorSegSocial(id, entry) {
+  fetch('/api/conductores/' + id + '/seg-social', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) })
+    .catch(function(e){ console.error('Error guardando seg. social del conductor', e); });
+}
+function syncConductorCreate(c) {
+  const body = { id: c.id };
+  CONDUCTOR_COLS_PLANOS.forEach(function(k){ body[CONDUCTOR_COL_MAP[k] || k] = c[k]; });
+  body.activo = c.activo ? 1 : 0;
+  normalizeEmptyToNull(body);
+  fetch('/api/conductores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function(res) {
+      if (!res.ok) throw new Error('No se pudo guardar el conductor en el servidor');
+      return Promise.all(Object.keys(c.docs || {}).map(function(tipo) {
+        const d = c.docs[tipo];
+        return fetch('/api/conductores/' + c.id + '/documentos/' + tipo, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vencimiento: d.ven, estado: d.est }) });
+      }));
+    })
+    .catch(function(e){ console.error('Error creando conductor en el servidor', e); });
 }
 
 // ══════════════════════ MÓDULO OPERACIONES: Contratos y Servicios ══════════════════════
@@ -5528,6 +5621,7 @@ function Conductores({
         }
       }
     }));
+    syncConductorDoc(cid, tipo, { vencimiento: f, estado: est });
     toast('Documento actualizado', 'success');
   }
   function subirArchivoCond(cid, tipo, file) {
@@ -5555,17 +5649,20 @@ function Conductores({
         }
       }
     }));
+    syncConductorDoc(cid, tipo, { archivoUrl: url, archivoNombre: file.name });
     toast(`Archivo "${file.name}" cargado`, 'success');
   }
   function reportarSS(cid) {
+    const fecha = new Date().toISOString().split('T')[0];
     setConds(p => p.map(c => {
       if (c.id !== cid) return c;
       if (c.segHist.some(h => h.mes === mes)) return c;
+      syncConductorSegSocial(cid, { mes, fecha, estado: 'REPORTADO' });
       return {
         ...c,
         segHist: [{
           mes,
-          fecha: new Date().toISOString().split('T')[0],
+          fecha,
           est: 'REPORTADO',
           archivoUrl: null,
           archivoNombre: null
@@ -5604,6 +5701,7 @@ function Conductores({
         ...entry
       } : h) : [entry, ...p.segHist]
     }));
+    syncConductorSegSocial(sel.id, { mes: entry.mes, fecha: entry.fecha, estado: entry.est, archivoUrl: entry.archivoUrl, archivoNombre: entry.archivoNombre });
     setShowSSInd(false);
     setSsIndForm({
       mes: 'Junio 2026',
@@ -5612,13 +5710,15 @@ function Conductores({
     toast(`Seg. Social ${ssIndForm.mes} reportada${ssIndForm.archivo ? ` con colilla adjunta` : ''}`, 'success');
   }
   function reportarTodos() {
+    const fecha = new Date().toISOString().split('T')[0];
     setConds(p => p.map(c => {
       if (!c.activo || c.segHist.some(h => h.mes === mes)) return c;
+      syncConductorSegSocial(c.id, { mes, fecha, estado: 'REPORTADO' });
       return {
         ...c,
         segHist: [{
           mes,
-          fecha: new Date().toISOString().split('T')[0],
+          fecha,
           est: 'REPORTADO',
           archivoUrl: null,
           archivoNombre: null
@@ -6154,6 +6254,7 @@ function Conductores({
         ...c,
         activo: !c.activo
       } : c));
+      syncConductorFields(sel.id, { activo: !sel.activo ? 1 : 0 });
       toast(sel.activo ? 'Conductor desactivado' : 'Conductor reactivado', sel.activo ? 'warning' : 'success');
       setSel(null);
     }
@@ -7020,6 +7121,9 @@ function Cartera({
         historialPagos: [pago, ...(p.cartera.historialPagos || [])]
       }
     } : p);
+    fetch('/api/cartera/' + vid + '/pagos', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha: pago.fecha, valor: pago.valor, obs: pago.obs, comprobanteNombre: pago.comprobanteNombre }) })
+      .catch(e => console.error('Error registrando pago en el servidor', e));
     setShowPagoForm(false);
     setPagoForm({
       fecha: '',
@@ -7030,33 +7134,36 @@ function Cartera({
     toast('Pago registrado en cartera', 'success');
   }
   function guardarRestriccion(vid, nuevaRestr, nota) {
-    setVeh(p => p.map(v => v.id !== vid ? v : {
-      ...v,
-      cartera: {
-        ...v.cartera,
-        restriccion: nuevaRestr,
-        restriccionManual: true,
-        historialRestr: [...(v.cartera.historialRestr || []), {
-          fecha: new Date().toISOString().split('T')[0],
-          usuario: USUARIO.nombre,
-          de: v.cartera.restriccion,
-          a: nuevaRestr,
-          nota
-        }]
-      }
+    let entry;
+    setVeh(p => p.map(v => {
+      if (v.id !== vid) return v;
+      entry = { fecha: new Date().toISOString().split('T')[0], usuario: USUARIO.nombre, de: v.cartera.restriccion, a: nuevaRestr, nota };
+      return {
+        ...v,
+        cartera: {
+          ...v.cartera,
+          restriccion: nuevaRestr,
+          restriccionManual: true,
+          historialRestr: [...(v.cartera.historialRestr || []), entry]
+        }
+      };
     }));
+    fetch('/api/cartera/' + vid, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restriccion: nuevaRestr, restriccion_manual: 1, historialRestrEntry: entry }) })
+      .catch(e => console.error('Error guardando restricción en el servidor', e));
     toast('Restricción actualizada manualmente', 'success');
     setEditRestr(null);
   }
   function resetAuto(vid) {
-    setVeh(p => p.map(v => v.id !== vid ? v : {
-      ...v,
-      cartera: {
-        ...v.cartera,
-        restriccion: calcRestriccionAuto(v.cartera.saldo),
-        restriccionManual: false
-      }
+    let nuevaRestr;
+    setVeh(p => p.map(v => {
+      if (v.id !== vid) return v;
+      nuevaRestr = calcRestriccionAuto(v.cartera.saldo);
+      return { ...v, cartera: { ...v.cartera, restriccion: nuevaRestr, restriccionManual: false } };
     }));
+    fetch('/api/cartera/' + vid, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restriccion: nuevaRestr, restriccion_manual: 0 }) })
+      .catch(e => console.error('Error restableciendo restricción en el servidor', e));
     toast('Restricción vuelta a cálculo automático', 'success');
     setEditRestr(null);
   }
@@ -21572,9 +21679,102 @@ function HomeERP({ onEnter }) {
         );
       })
     ),
-    React.createElement('div', { style: { marginTop: 30, fontSize: 10, color: '#4a4a54' } }, 'PIG — Plataforma Integral de Gestión')
+    React.createElement('div', { style: { marginTop: 30, fontSize: 10, color: '#4a4a54' } }, 'PIG — Plataforma Integral de Gestión'),
+    React.createElement('button', {
+      onClick: pigLogout,
+      style: { position: 'fixed', top: 20, right: 24, background: 'transparent', border: '1px solid #2a2a33', color: '#8b8b96', borderRadius: 6, padding: '6px 12px', fontSize: 11, cursor: 'pointer' }
+    }, `Cerrar sesión (${USUARIO.nombre})`)
   );
 }
+
+// ══════════════════════ AUTENTICACIÓN ══════════════════════
+let _authSetStatus = null;
+async function pigLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) {}
+  if (_authSetStatus) _authSetStatus('anon');
+}
+function LoginScreen({ onLogin, error, loading }) {
+  const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  function submit(e) {
+    e.preventDefault();
+    if (!email || !password) return;
+    onLogin(email, password);
+  }
+  const inputStyle = { width: '100%', padding: '9px 12px', borderRadius: 6, border: '1px solid #2a2a33', background: '#0f0f14', color: '#fff', fontSize: 13, boxSizing: 'border-box' };
+  const labelStyle = { display: 'block', fontSize: 10, fontWeight: 700, color: '#8b8b96', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 };
+  return React.createElement('div', { style: { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f', padding: '40px 20px' } },
+    React.createElement('div', { style: { textAlign: 'center', marginBottom: 28 } },
+      React.createElement('div', { style: { fontSize: 13, fontWeight: 700, letterSpacing: 2, color: '#FF7F00', textTransform: 'uppercase' } }, 'Transportes Multimodal Group S.A.S.'),
+      React.createElement('div', { style: { fontSize: 24, fontWeight: 800, marginTop: 6, color: '#fff' } }, 'PIG — Iniciar sesión')
+    ),
+    React.createElement('form', { onSubmit: submit, style: { background: '#16161d', border: '1px solid #2a2a33', borderRadius: 12, padding: '28px 26px', width: '100%', maxWidth: 340 } },
+      error && React.createElement('div', { style: { background: 'rgba(192,57,43,.12)', border: '1px solid #C0392B', color: '#ff8a80', borderRadius: 6, padding: '8px 10px', fontSize: 12, marginBottom: 14 } }, error),
+      React.createElement('div', { style: { marginBottom: 14 } },
+        React.createElement('label', { style: labelStyle }, 'Correo'),
+        React.createElement('input', { type: 'email', value: email, onChange: e => setEmail(e.target.value), required: true, style: inputStyle })
+      ),
+      React.createElement('div', { style: { marginBottom: 20 } },
+        React.createElement('label', { style: labelStyle }, 'Contraseña'),
+        React.createElement('input', { type: 'password', value: password, onChange: e => setPassword(e.target.value), required: true, style: inputStyle })
+      ),
+      React.createElement('button', { type: 'submit', disabled: loading, style: { width: '100%', padding: '10px', borderRadius: 6, border: 'none', background: '#FF7F00', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: loading ? 0.7 : 1 } }, loading ? 'Ingresando…' : 'Ingresar')
+    )
+  );
+}
+function AuthGate() {
+  const [status, setStatus] = React.useState('loading'); // loading | anon | authed
+  const [loginError, setLoginError] = React.useState('');
+  const [loginLoading, setLoginLoading] = React.useState(false);
+
+  async function bootstrap(user) {
+    Object.assign(USUARIO, { id: user.id, nombre: user.nombre, rol: user.rol, email: user.email });
+    try {
+      await Promise.all([loadVehiculosStore(), loadConductoresStore()]);
+    } catch (e) {
+      console.error('Error cargando datos iniciales', e);
+    }
+    setStatus('authed');
+  }
+
+  React.useEffect(() => {
+    _authSetStatus = setStatus;
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(bootstrap)
+      .catch(() => setStatus('anon'));
+  }, []);
+
+  async function handleLogin(email, password) {
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Credenciales inválidas');
+      }
+      const u = await res.json();
+      await bootstrap(u);
+    } catch (e) {
+      setLoginError(e.message);
+      setLoginLoading(false);
+    }
+  }
+
+  if (status === 'loading') {
+    return React.createElement('div', { style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f', color: '#8b8b96', fontFamily: 'system-ui' } }, 'Cargando…');
+  }
+  if (status === 'anon') {
+    return React.createElement(LoginScreen, { onLogin: handleLogin, error: loginError, loading: loginLoading });
+  }
+  return React.createElement(App, null);
+}
+
 function App() {
   const [showHome, setShowHome] = useState(true);
   const [topMod, setTopMod] = useState(null);
@@ -21714,6 +21914,10 @@ function App() {
     title: "Panel principal",
     onClick: () => { setShowHome(true); setTopMod(null); }
   }, "🏠"), /*#__PURE__*/React.createElement("button", {
+    className: "bi",
+    title: "Cerrar sesión",
+    onClick: pigLogout
+  }, "🚪"), /*#__PURE__*/React.createElement("button", {
     className: "theme-toggle",
     onClick: () => setTheme(t => t === 'light' ? 'dark' : 'light')
   }, theme === 'light' ? /*#__PURE__*/React.createElement(React.Fragment, null, "🌙 Oscuro") : /*#__PURE__*/React.createElement(React.Fragment, null, "☀️ Claro")), /*#__PURE__*/React.createElement("div", {
@@ -21755,6 +21959,6 @@ function App() {
     toasts: toasts
   }));
 }
-ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));</script>
+ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(AuthGate, null));</script>
 </body>
 </html>

@@ -2,7 +2,8 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const db = new Database(path.join(__dirname, 'data.sqlite'));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data.sqlite');
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS vehiculos (
   propietario_telefono TEXT, propietario_email TEXT,
   fecha_vin TEXT,
   convenio_cliente TEXT, convenio_vigencia TEXT, convenio_estado TEXT,
+  log_habilitacion TEXT NOT NULL DEFAULT '[]', -- JSON: historial de habilitar/deshabilitar
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -44,7 +46,7 @@ CREATE TABLE IF NOT EXISTS documentos (
   doc_tipo TEXT NOT NULL, -- soat | rtm | to | polizaRC | licencia | segSocial | examenMedico | mantDefensivo | antecedentes | cedula | habeasData
   vencimiento TEXT,
   estado TEXT NOT NULL DEFAULT 'PENDIENTE', -- VIGENTE | PROXIMO | VENCIDO | PENDIENTE
-  archivo_url TEXT,
+  archivo_url TEXT, archivo_nombre TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(entidad_tipo, entidad_id, doc_tipo)
 );
@@ -65,7 +67,8 @@ CREATE TABLE IF NOT EXISTS conductores (
 CREATE TABLE IF NOT EXISTS conductor_seg_social_historial (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conductor_id TEXT NOT NULL REFERENCES conductores(id) ON DELETE CASCADE,
-  mes TEXT, fecha TEXT, estado TEXT
+  mes TEXT, fecha TEXT, estado TEXT, archivo_url TEXT, archivo_nombre TEXT,
+  UNIQUE(conductor_id, mes)
 );
 
 -- ───────────────────────── CARTERA ─────────────────────────
@@ -75,14 +78,15 @@ CREATE TABLE IF NOT EXISTS cartera (
   estado TEXT NOT NULL DEFAULT 'AL_DIA', -- AL_DIA | PROXIMO | MORA_MODERADA | MORA_CRITICA
   ultimo_pago TEXT,
   restriccion TEXT, -- calculada o manual
-  restriccion_manual INTEGER NOT NULL DEFAULT 0
+  restriccion_manual INTEGER NOT NULL DEFAULT 0,
+  restriccion_historial TEXT NOT NULL DEFAULT '[]' -- JSON: historial de cambios manuales
 );
 
 CREATE TABLE IF NOT EXISTS cartera_pagos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   vehiculo_id TEXT NOT NULL REFERENCES vehiculos(id) ON DELETE CASCADE,
   fecha TEXT NOT NULL, valor INTEGER NOT NULL, obs TEXT,
-  comprobante_url TEXT, registrado_por TEXT,
+  comprobante_url TEXT, comprobante_nombre TEXT, registrado_por TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

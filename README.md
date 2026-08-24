@@ -14,28 +14,34 @@ npm start
 
 **Credenciales de la API**: `admin@multimodalgroup.com` / `admin123` (rol `admin`).
 
+## Desplegar para uso real (varios usuarios, varios computadores)
+
+Ver [`docs/DEPLOY.md`](docs/DEPLOY.md) — despliegue en Render con disco persistente (`render.yaml` ya incluido en el repo).
+
 ## Stack actual
 
-- **Frontend**: React 18 (UMD, vía CDN) montado directamente con `React.createElement` — sin JSX, sin bundler, sin build step. Todo vive en `public/index.html` (~21.7k líneas).
-- **Librerías externas cargadas por CDN**:
-  - `react` / `react-dom` 18 (unpkg)
-  - `xlsx` (SheetJS) — exportación/importación de Excel
-  - `Leaflet` — se inyecta dinámicamente solo al entrar al tablero de despacho (mapa de rutas)
-  - `Google Maps JavaScript API` — con **API key placeholder** (`TU_API_KEY_DE_GOOGLE_MAPS`), ver sección de integraciones pendientes
-  - Google Fonts (Space Grotesk, Inter, JetBrains Mono)
-- **Backend**: Node.js + Express + SQLite (`better-sqlite3`) + sesiones (`express-session`/`bcryptjs`). API REST real con autenticación por rol, cubriendo Flota, Cartera, Infracciones, Pólizas/Reclamaciones, Convenios, Leasing, Renovaciones mensuales, Caja menor, Trámites, Portal de afiliación/Solicitudes, y Contratos/Servicios de Operaciones. Ver diseño completo y catálogo de endpoints en [`docs/BACKEND_DESIGN.md`](docs/BACKEND_DESIGN.md).
-- **Persistencia**: SQLite (`data.sqlite`, no versionado). **El frontend todavía NO está conectado a esta API** — sigue operando sobre los arreglos mock (`vehiculos0`, `conductores0`, etc.) y pierde los cambios al recargar. Conectar cada módulo es el siguiente paso; la estrategia de migración sin reescribir la UI está documentada en `docs/BACKEND_DESIGN.md` §5.
+- **Frontend**: React 18 (UMD) + XLSX (SheetJS), servidos como archivos locales desde `public/vendor/` (no CDN — ver más abajo) y montados con `React.createElement` — sin JSX, sin bundler, sin build step. Todo vive en `public/index.html` (~21.8k líneas).
+- **Librerías externas**:
+  - `react` / `react-dom` 18 y `xlsx` — vendorizadas en `public/vendor/` (antes cargaban desde unpkg/cdnjs; se movieron localmente para no depender de CDNs externos en producción).
+  - `Leaflet` — se sigue inyectando dinámicamente por CDN solo al entrar al tablero de despacho (mapa de rutas); no forma parte del flujo ya conectado.
+  - `Google Maps JavaScript API` — con **API key placeholder** (`TU_API_KEY_DE_GOOGLE_MAPS`), ver sección de integraciones pendientes.
+  - Google Fonts (Space Grotesk, Inter, JetBrains Mono) — por CDN, con fallback a fuentes del sistema si no cargan.
+- **Backend**: Node.js + Express + SQLite (`better-sqlite3`) + sesiones (`express-session`/`bcryptjs`). API REST real con autenticación por rol. Ver diseño completo y catálogo de endpoints en [`docs/BACKEND_DESIGN.md`](docs/BACKEND_DESIGN.md).
+- **Persistencia**: SQLite (`data.sqlite`, no versionado; en producción vive en el disco persistente de Render). **El frontend ya está conectado a la API real** para Autenticación, Vehículos, Conductores y Cartera — los cambios que se hacen ahí se guardan en el servidor y los ve cualquier usuario, en cualquier computador, que entre a la misma URL (verificado con pruebas automatizadas simulando dos sesiones/computadores distintos). El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Trámites, Solicitudes, Operaciones) todavía usan datos de ejemplo en memoria del navegador — la API para todos ellos ya existe, falta repetir el mismo patrón de conexión (`docs/BACKEND_DESIGN.md` §5).
 
 ## Estructura del repo
 
 ```
 server.js            # servidor Express: API REST + estático
 database.js          # esquema SQLite (better-sqlite3) y seed inicial
+render.yaml           # Blueprint de despliegue en Render (con disco persistente)
 docs/
   BACKEND_DESIGN.md   # diseño del backend, modelo de datos y catálogo de endpoints
+  DEPLOY.md           # cómo desplegar en Render para uso multiusuario real
 package.json
 public/
-  index.html          # aplicación completa (frontend + datos mock, aún sin conectar a la API)
+  index.html          # aplicación completa (Auth/Vehículos/Conductores/Cartera ya conectados a la API)
+  vendor/             # React, ReactDOM y XLSX vendorizados localmente (sin depender de CDN)
 ```
 
 ## Arquitectura de la aplicación (dentro de `index.html`)
@@ -89,21 +95,19 @@ public/
 
 ## Datos y estado
 
-**Backend**: ya existe un modelo de datos persistente completo en SQLite (`database.js`) con API REST (`server.js`) — ver `docs/BACKEND_DESIGN.md`.
+**Backend**: modelo de datos persistente completo en SQLite (`database.js`) con API REST (`server.js`) — ver `docs/BACKEND_DESIGN.md`.
 
-**Frontend**: por ahora sigue sin conectar. Cada módulo de `index.html` mantiene su propio `useState` inicializado con arreglos de ejemplo definidos como constantes en el mismo archivo (`vehiculos0`, `conductores0`, `infracciones0`, `AFILIADO_DEMO`, `TARIFAS`, etc.), sin llamadas `fetch` a la API real. Esto significa que, hasta que se haga la conexión módulo por módulo:
-
-- Todo cambio hecho en la UI se pierde al recargar.
-- No hay autenticación real en el frontend (`USUARIO` sigue siendo una constante fija, aunque la API ya soporta login/roles).
+**Frontend**: `AuthGate` (pantalla de login real, ver el final de `index.html`) valida sesión contra `/api/auth/me` y, tras iniciar sesión, carga Vehículos y Conductores desde la API antes de mostrar la app — de ahí en adelante `USUARIO` refleja al usuario real de la sesión, no una constante fija. Los módulos de Vehículos, Conductores y Cartera guardan cada cambio (documentos, pagos, restricciones, altas) contra el servidor mediante las funciones `sync*` en `index.html` (`syncVehiculoUpdate`, `syncConductorFields`, etc. — buscar `credentials: 'same-origin'` para ubicarlas todas), manteniendo el mismo patrón síncrono de "store" que ya tenían para no tocar el resto de los componentes. El resto de módulos (Infracciones, Pólizas, Convenios, Leasing, Caja menor, Renovaciones mensuales, Trámites, Solicitudes/Portal de afiliación, Operaciones) siguen usando `useState` con arreglos de ejemplo (`infracciones0`, `polizas0`, etc.) — la API para todos ellos ya existe, falta aplicar el mismo patrón de conexión módulo por módulo.
 
 ## Integraciones pendientes / puntos de extensión
 
-1. **Conectar el frontend a la API real** — el backend ya existe (`docs/BACKEND_DESIGN.md`); falta reemplazar los `useState(seed)`/funciones "store" del frontend por `fetch` a los endpoints, módulo por módulo (orden recomendado en el diseño, §5).
-2. **Google Maps** — la API key es un placeholder (`TU_API_KEY_DE_GOOGLE_MAPS`, línea 15 de `index.html`). Sin ella, `AddressField`/`ParadasField` funcionan como texto libre, sin autocompletar ni geolocalizar. Se recomienda mover la key a una variable de entorno inyectada por el servidor en vez de dejarla hardcodeada en el HTML.
-3. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
-4. **Carga de archivos** — la API modela `archivo_url`/`comprobante_url`/`foto_url` como texto; falta el endpoint de subida real (ver `docs/BACKEND_DESIGN.md` §7).
+1. **Terminar de conectar el frontend a la API real** — Vehículos, Conductores, Cartera y Auth ya están conectados y probados (incluida persistencia entre sesiones/computadores distintos); falta repetir el patrón en el resto de módulos (orden recomendado en `docs/BACKEND_DESIGN.md` §5).
+2. **Carga de archivos real** — hoy `archivoUrl`/`comprobante` se guardan como `blob:` locales al navegador (no sobreviven a un recargo ni se comparten entre usuarios), aunque la API ya tiene las columnas listas (`archivo_url`, `archivo_nombre`, `comprobante_url`). Falta un endpoint de subida (`multipart/form-data` → disco o almacenamiento externo).
+3. **Google Maps** — la API key es un placeholder (`TU_API_KEY_DE_GOOGLE_MAPS`, línea 15 de `index.html`). Sin ella, `AddressField`/`ParadasField` funcionan como texto libre, sin autocompletar ni geolocalizar. Se recomienda mover la key a una variable de entorno inyectada por el servidor en vez de dejarla hardcodeada en el HTML.
+4. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
 5. **Exportación/importación Excel** — ya integrada vía SheetJS (`xlsx`), reutilizable para nuevas integraciones de reportes.
 6. **Módulos reservados** — el `HomeERP` ya contempla un módulo "Comercial" y varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio.
+7. **Sesiones persistentes entre reinicios** — `express-session` usa almacenamiento en memoria; un redeploy cierra la sesión de todos los usuarios (los datos no se pierden, solo el login). Ver `docs/DEPLOY.md`.
 
 ## Notas para seguir desarrollando
 

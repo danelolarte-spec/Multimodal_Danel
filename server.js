@@ -7,6 +7,11 @@ const db = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProd = process.env.NODE_ENV === 'production';
+
+// Render (y la mayoría de PaaS) terminan TLS en su proxy y reenvían por HTTP interno;
+// sin esto, express-session no detecta HTTPS y las cookies "secure" nunca se envían.
+if (isProd) app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -15,10 +20,21 @@ app.use(
     secret: process.env.SESSION_SECRET || 'pig-multimodal-secret-key-change-me',
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 1000 * 60 * 60 * 8 },
+    cookie: { maxAge: 1000 * 60 * 60 * 8, secure: isProd, sameSite: 'lax' },
   })
 );
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Un '' en un campo de referencia (ej. vehiculo_id) rompe las FK en SQLite —
+// SQLite solo aplica el default/NULL de la FK cuando el valor es NULL, no ''.
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    for (const k of Object.keys(req.body)) {
+      if (k.endsWith('_id') && req.body[k] === '') req.body[k] = null;
+    }
+  }
+  next();
+});
 
 // ───────────────────────── Helpers ─────────────────────────
 function requireAuth(req, res, next) {
@@ -125,11 +141,23 @@ app.get('/api/dashboard/resumen', requireAuth, (req, res) => {
 // ───────────────────────── Vehículos ─────────────────────────
 function vehiculoConDetalle(v) {
   if (!v) return v;
-  const docs = db.prepare("SELECT doc_tipo, vencimiento, estado, archivo_url FROM documentos WHERE entidad_tipo='vehiculo' AND entidad_id=?").all(v.id);
+  const docs = db.prepare("SELECT doc_tipo, vencimiento, estado, archivo_url, archivo_nombre FROM documentos WHERE entidad_tipo='vehiculo' AND entidad_id=?").all(v.id);
   const documentos = {};
-  docs.forEach((d) => { documentos[d.doc_tipo] = { ven: d.vencimiento, estado: d.estado, archivoUrl: d.archivo_url }; });
-  const cartera = db.prepare('SELECT saldo, estado, ultimo_pago, restriccion, restriccion_manual FROM cartera WHERE vehiculo_id=?').get(v.id);
-  return { ...v, documentos, cartera: cartera || null };
+  docs.forEach((d) => { documentos[d.doc_tipo] = { ven: d.vencimiento, estado: d.estado, archivoUrl: d.archivo_url, archivoNombre: d.archivo_nombre }; });
+  const carteraRow = db.prepare('SELECT * FROM cartera WHERE vehiculo_id=?').get(v.id);
+  const pagos = db.prepare('SELECT fecha, valor, obs, comprobante_url, comprobante_nombre, registrado_por FROM cartera_pagos WHERE vehiculo_id=? ORDER BY fecha DESC').all(v.id);
+  const cartera = carteraRow ? {
+    saldo: carteraRow.saldo, estado: carteraRow.estado, ultimoPago: carteraRow.ultimo_pago,
+    restriccion: carteraRow.restriccion, restriccionManual: !!carteraRow.restriccion_manual,
+    historialRestr: JSON.parse(carteraRow.restriccion_historial || '[]'),
+    historialPagos: pagos.map((p) => ({ fecha: p.fecha, valor: p.valor, obs: p.obs, comprobante: p.comprobante_url, comprobanteNombre: p.comprobante_nombre, registradoPor: p.registrado_por })),
+  } : null;
+  return {
+    ...v, documentos, cartera, logHab: JSON.parse(v.log_habilitacion || '[]'),
+    propietario: { nombre: v.propietario_nombre, documento: v.propietario_documento, telefono: v.propietario_telefono, email: v.propietario_email },
+    convenio: v.convenio_cliente ? { cliente: v.convenio_cliente, vigencia: v.convenio_vigencia, estado: v.convenio_estado } : null,
+    fechaVin: v.fecha_vin,
+  };
 }
 
 app.get('/api/vehiculos', requireAuth, (req, res) => {
@@ -146,17 +174,18 @@ app.get('/api/vehiculos/:id', requireAuth, (req, res) => {
 app.post('/api/vehiculos', requireRole('admin', 'tramites'), (req, res) => {
   const body = req.body || {};
   const id = body.id || newId('v');
-  const cols = ['id','placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado'];
+  const cols = ['id','placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion'];
   const row = Object.fromEntries(cols.map((c) => [c, body[c] ?? null]));
   row.id = id;
   row.estado = row.estado || 'Activo';
+  row.log_habilitacion = row.log_habilitacion || '[]';
   db.prepare(`INSERT INTO vehiculos (${cols.join(',')}) VALUES (${cols.map((c) => '@' + c).join(',')})`).run(row);
   db.prepare('INSERT INTO cartera (vehiculo_id, saldo, estado) VALUES (?, 0, ?)').run(id, 'AL_DIA');
   res.status(201).json(vehiculoConDetalle(db.prepare('SELECT * FROM vehiculos WHERE id=?').get(id)));
 });
 
 app.put('/api/vehiculos/:id', requireRole('admin', 'tramites'), (req, res) => {
-  const cols = ['placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado'];
+  const cols = ['placa','clase','marca','linea','modelo','motor','chasis','vin','color','capacidad','combustible','tipo','interno','estado','propietario_nombre','propietario_documento','propietario_telefono','propietario_email','fecha_vin','convenio_cliente','convenio_vigencia','convenio_estado','log_habilitacion'];
   const present = cols.filter((c) => c in req.body);
   if (present.length) {
     db.prepare(`UPDATE vehiculos SET ${present.map((c) => `${c}=@${c}`).join(',')}, updated_at=datetime('now') WHERE id=@id`)
@@ -168,11 +197,16 @@ app.put('/api/vehiculos/:id', requireRole('admin', 'tramites'), (req, res) => {
 });
 
 app.put('/api/vehiculos/:id/documentos/:docTipo', requireRole('admin', 'tramites'), (req, res) => {
-  const { vencimiento, estado, archivoUrl } = req.body || {};
-  db.prepare(`INSERT INTO documentos (entidad_tipo, entidad_id, doc_tipo, vencimiento, estado, archivo_url, updated_at)
-    VALUES ('vehiculo', ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(entidad_tipo, entidad_id, doc_tipo) DO UPDATE SET vencimiento=excluded.vencimiento, estado=excluded.estado, archivo_url=excluded.archivo_url, updated_at=datetime('now')`)
-    .run(req.params.id, req.params.docTipo, vencimiento ?? null, estado ?? 'PENDIENTE', archivoUrl ?? null);
+  const existing = db.prepare("SELECT vencimiento, estado, archivo_url, archivo_nombre FROM documentos WHERE entidad_tipo='vehiculo' AND entidad_id=? AND doc_tipo=?").get(req.params.id, req.params.docTipo);
+  const b = req.body || {};
+  const vencimiento = 'vencimiento' in b ? b.vencimiento : existing?.vencimiento ?? null;
+  const estado = 'estado' in b ? b.estado : existing?.estado ?? 'PENDIENTE';
+  const archivoUrl = 'archivoUrl' in b ? b.archivoUrl : existing?.archivo_url ?? null;
+  const archivoNombre = 'archivoNombre' in b ? b.archivoNombre : existing?.archivo_nombre ?? null;
+  db.prepare(`INSERT INTO documentos (entidad_tipo, entidad_id, doc_tipo, vencimiento, estado, archivo_url, archivo_nombre, updated_at)
+    VALUES ('vehiculo', ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entidad_tipo, entidad_id, doc_tipo) DO UPDATE SET vencimiento=excluded.vencimiento, estado=excluded.estado, archivo_url=excluded.archivo_url, archivo_nombre=excluded.archivo_nombre, updated_at=datetime('now')`)
+    .run(req.params.id, req.params.docTipo, vencimiento, estado, archivoUrl, archivoNombre);
   res.json(vehiculoConDetalle(db.prepare('SELECT * FROM vehiculos WHERE id=?').get(req.params.id)));
 });
 
@@ -185,10 +219,22 @@ app.get('/api/cartera', requireAuth, (req, res) => {
 });
 
 app.put('/api/cartera/:vehiculoId', requireRole('admin', 'tramites'), (req, res) => {
-  const { restriccion, restriccion_manual } = req.body || {};
-  db.prepare('UPDATE cartera SET restriccion = COALESCE(?, restriccion), restriccion_manual = COALESCE(?, restriccion_manual) WHERE vehiculo_id = ?')
-    .run(restriccion ?? null, restriccion_manual ?? null, req.params.vehiculoId);
-  res.json(db.prepare('SELECT * FROM cartera WHERE vehiculo_id = ?').get(req.params.vehiculoId));
+  const { restriccion, restriccion_manual, historialRestrEntry } = req.body || {};
+  const tx = db.transaction(() => {
+    if (historialRestrEntry) {
+      const cur = db.prepare('SELECT restriccion_historial FROM cartera WHERE vehiculo_id=?').get(req.params.vehiculoId);
+      const hist = JSON.parse(cur?.restriccion_historial || '[]');
+      hist.push(historialRestrEntry);
+      db.prepare('UPDATE cartera SET restriccion_historial = ? WHERE vehiculo_id = ?').run(JSON.stringify(hist), req.params.vehiculoId);
+    }
+    if (restriccion !== undefined || restriccion_manual !== undefined) {
+      db.prepare('UPDATE cartera SET restriccion = COALESCE(?, restriccion), restriccion_manual = COALESCE(?, restriccion_manual) WHERE vehiculo_id = ?')
+        .run(restriccion ?? null, restriccion_manual ?? null, req.params.vehiculoId);
+    }
+  });
+  tx();
+  const row = db.prepare('SELECT * FROM cartera WHERE vehiculo_id = ?').get(req.params.vehiculoId);
+  res.json({ ...row, restriccionManual: !!row.restriccion_manual, historialRestr: JSON.parse(row.restriccion_historial || '[]') });
 });
 
 app.get('/api/cartera/:vehiculoId/pagos', requireAuth, (req, res) => {
@@ -196,12 +242,12 @@ app.get('/api/cartera/:vehiculoId/pagos', requireAuth, (req, res) => {
 });
 
 app.post('/api/cartera/:vehiculoId/pagos', requireRole('admin', 'tramites'), (req, res) => {
-  const { fecha, valor, obs, comprobanteUrl } = req.body || {};
+  const { fecha, valor, obs, comprobanteUrl, comprobanteNombre } = req.body || {};
   if (!fecha || !valor) return res.status(400).json({ error: 'fecha y valor son requeridos' });
   const registradoPor = db.prepare('SELECT nombre FROM users WHERE id = ?').get(req.session.userId)?.nombre;
   const tx = db.transaction(() => {
-    db.prepare('INSERT INTO cartera_pagos (vehiculo_id, fecha, valor, obs, comprobante_url, registrado_por) VALUES (?,?,?,?,?,?)')
-      .run(req.params.vehiculoId, fecha, valor, obs || null, comprobanteUrl || null, registradoPor);
+    db.prepare('INSERT INTO cartera_pagos (vehiculo_id, fecha, valor, obs, comprobante_url, comprobante_nombre, registrado_por) VALUES (?,?,?,?,?,?,?)')
+      .run(req.params.vehiculoId, fecha, valor, obs || null, comprobanteUrl || null, comprobanteNombre || null, registradoPor);
     const cartera = db.prepare('SELECT saldo FROM cartera WHERE vehiculo_id = ?').get(req.params.vehiculoId);
     const nuevoSaldo = Math.max(0, (cartera?.saldo || 0) - valor);
     db.prepare('UPDATE cartera SET saldo = ?, ultimo_pago = ? WHERE vehiculo_id = ?').run(nuevoSaldo, fecha, req.params.vehiculoId);
@@ -213,11 +259,11 @@ app.post('/api/cartera/:vehiculoId/pagos', requireRole('admin', 'tramites'), (re
 // ───────────────────────── Conductores ─────────────────────────
 function conductorConDetalle(c) {
   if (!c) return c;
-  const docs = db.prepare("SELECT doc_tipo, vencimiento, estado, archivo_url FROM documentos WHERE entidad_tipo='conductor' AND entidad_id=?").all(c.id);
+  const docs = db.prepare("SELECT doc_tipo, vencimiento, estado, archivo_url, archivo_nombre FROM documentos WHERE entidad_tipo='conductor' AND entidad_id=?").all(c.id);
   const docsObj = {};
-  docs.forEach((d) => { docsObj[d.doc_tipo] = { ven: d.vencimiento, est: d.estado, archivoUrl: d.archivo_url }; });
-  const segHist = db.prepare('SELECT mes, fecha, estado FROM conductor_seg_social_historial WHERE conductor_id=? ORDER BY fecha DESC').all(c.id);
-  return { ...c, docs: docsObj, segHist };
+  docs.forEach((d) => { docsObj[d.doc_tipo] = { ven: d.vencimiento, est: d.estado, archivoUrl: d.archivo_url, archivoNombre: d.archivo_nombre }; });
+  const segHist = db.prepare('SELECT mes, fecha, estado as est, archivo_url as archivoUrl, archivo_nombre as archivoNombre FROM conductor_seg_social_historial WHERE conductor_id=? ORDER BY fecha DESC').all(c.id);
+  return { ...c, docs: docsObj, segHist, vehiculo: c.vehiculo_id, vencLic: c.venc_licencia, fechaVin: c.fecha_vin, activo: !!c.activo };
 }
 
 app.get('/api/conductores', requireAuth, (req, res) => {
@@ -253,12 +299,27 @@ app.put('/api/conductores/:id', requireRole('admin', 'tramites'), (req, res) => 
 });
 
 app.put('/api/conductores/:id/documentos/:docTipo', requireRole('admin', 'tramites'), (req, res) => {
-  const { vencimiento, estado, archivoUrl } = req.body || {};
-  db.prepare(`INSERT INTO documentos (entidad_tipo, entidad_id, doc_tipo, vencimiento, estado, archivo_url, updated_at)
-    VALUES ('conductor', ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(entidad_tipo, entidad_id, doc_tipo) DO UPDATE SET vencimiento=excluded.vencimiento, estado=excluded.estado, archivo_url=excluded.archivo_url, updated_at=datetime('now')`)
-    .run(req.params.id, req.params.docTipo, vencimiento ?? null, estado ?? 'PENDIENTE', archivoUrl ?? null);
+  const existing = db.prepare("SELECT vencimiento, estado, archivo_url, archivo_nombre FROM documentos WHERE entidad_tipo='conductor' AND entidad_id=? AND doc_tipo=?").get(req.params.id, req.params.docTipo);
+  const b = req.body || {};
+  const vencimiento = 'vencimiento' in b ? b.vencimiento : existing?.vencimiento ?? null;
+  const estado = 'estado' in b ? b.estado : existing?.estado ?? 'PENDIENTE';
+  const archivoUrl = 'archivoUrl' in b ? b.archivoUrl : existing?.archivo_url ?? null;
+  const archivoNombre = 'archivoNombre' in b ? b.archivoNombre : existing?.archivo_nombre ?? null;
+  db.prepare(`INSERT INTO documentos (entidad_tipo, entidad_id, doc_tipo, vencimiento, estado, archivo_url, archivo_nombre, updated_at)
+    VALUES ('conductor', ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entidad_tipo, entidad_id, doc_tipo) DO UPDATE SET vencimiento=excluded.vencimiento, estado=excluded.estado, archivo_url=excluded.archivo_url, archivo_nombre=excluded.archivo_nombre, updated_at=datetime('now')`)
+    .run(req.params.id, req.params.docTipo, vencimiento, estado, archivoUrl, archivoNombre);
   res.json(conductorConDetalle(db.prepare('SELECT * FROM conductores WHERE id=?').get(req.params.id)));
+});
+
+app.post('/api/conductores/:id/seg-social', requireRole('admin', 'tramites'), (req, res) => {
+  const { mes, fecha, estado, archivoUrl, archivoNombre } = req.body || {};
+  if (!mes) return res.status(400).json({ error: 'mes es requerido' });
+  db.prepare(`INSERT INTO conductor_seg_social_historial (conductor_id, mes, fecha, estado, archivo_url, archivo_nombre)
+    VALUES (?,?,?,?,?,?)
+    ON CONFLICT(conductor_id, mes) DO UPDATE SET fecha=excluded.fecha, estado=excluded.estado, archivo_url=excluded.archivo_url, archivo_nombre=excluded.archivo_nombre`)
+    .run(req.params.id, mes, fecha || null, estado || 'REPORTADO', archivoUrl || null, archivoNombre || null);
+  res.status(201).json(conductorConDetalle(db.prepare('SELECT * FROM conductores WHERE id=?').get(req.params.id)));
 });
 
 // ───────────────────────── Infracciones ─────────────────────────

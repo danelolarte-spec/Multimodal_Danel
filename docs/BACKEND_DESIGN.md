@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **fase 1 implementada** (auth + flota + trámites + afiliación). Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para conectar el frontend (hoy 100% mock) a datos reales.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -60,34 +60,25 @@ Ver el esquema completo y comentado en `database.js`. Resumen por módulo:
 
 ## 5. Estrategia de migración del frontend (sin reescribir todo de una vez)
 
-El HTML ya tiene, para varios módulos, una capa de acceso a datos separada de los componentes React: funciones como `getVehiculosStore()`, `updateVehiculo(id, upd)`, `addVehiculoStore(v)` (ver `public/index.html` líneas ~417-429), y equivalentes para conductores, contratos y servicios. Otros módulos usan funciones sueltas por entidad (`updateTramite`, `updateCajaMenorEntry`, `updateSolicitud`, etc.).
+**Ya implementado y validado para Vehículos y Conductores** (ver `public/index.html`, buscar `loadVehiculosStore`/`loadConductoresStore`): la costura correcta resultó ser mantener `getVehiculosStore()` **síncrona** — decenas de componentes la llaman en medio del render (`useState(() => getVehiculosStore()...)`, `.find()` dentro de handlers, etc.), así que convertirla en `async` habría obligado a tocar todos esos sitios. En cambio:
 
-Esa es la costura correcta para conectar la API real **sin tocar los componentes de UI**: cada función pasa de operar sobre un array en memoria a hacer `fetch` a su endpoint equivalente, manteniendo la misma firma. Ejemplo (vehículos):
+- `getVehiculosStore()` sigue devolviendo el arreglo en memoria tal cual, sin red.
+- Una función nueva `loadVehiculosStore()` (async) hace el `fetch('/api/vehiculos')` **una sola vez**, al iniciar sesión (en `AuthGate`, antes de mostrar `App`), y llena ese mismo arreglo en memoria. De ahí en adelante todo el resto del código sigue funcionando exactamente igual que con el mock.
+- `updateVehiculo(id, upd)` y `addVehiculoStore(v)` actualizan el arreglo en memoria de forma optimista (igual que antes) **y además** disparan en segundo plano (`fetch` sin `await`, con `.catch` a consola) la llamada real a la API (`syncVehiculoUpdate`/`syncVehiculoCreate`). La UI no espera la respuesta del servidor — se comporta igual que el prototipo original, solo que ahora también persiste.
 
-```js
-// Antes (mock):
-function getVehiculosStore() {
-  if (!_vehiculosStore) _vehiculosStore = vehiculos0.map(v => ({...v}));
-  return _vehiculosStore;
-}
+Lo mismo se aplicó a Conductores, pero ahí no existía capa de store para las mutaciones (solo para lectura/alta) — hubo que añadir una llamada `sync*` justo al lado de cada `setConds(...)` existente en el componente `Conductores`. Es más código tocado que en Vehículos, pero el patrón (optimista en memoria + `fetch` en paralelo) es el mismo.
 
-// Después (API real) — misma firma, ahora async; los componentes que la
-// llaman deben adaptarse a await/useEffect, que es el único cambio real
-// que toca la UI:
-async function getVehiculosStore() {
-  const res = await fetch('/api/vehiculos');
-  return res.json();
-}
-```
+**Errores reales encontrados al conectar** (dejar registrado para no repetirlos al migrar los módulos que faltan):
+1. La API debe devolver exactamente la forma anidada que el frontend espera (`propietario: {nombre, ...}`, `convenio: {...}` anidados, no columnas planas `propietario_nombre`) — de lo contrario los componentes truenan en `.map()` con "Cannot read properties of undefined".
+2. Un `PUT` de documento que solo manda un campo (p. ej. solo `archivoUrl` al subir un archivo) no debe pisar con `null`/`PENDIENTE` los campos que no vinieron en el body — hay que leer el registro existente y solo sobrescribir lo que llegó.
+3. Un `''` (string vacío) en un campo `*_id` (ej. "sin vehículo asignado") rompe la restricción de llave foránea en SQLite — SQLite solo aplica `NULL`/comportamiento de FK opcional cuando el valor es `NULL`, no `''`. Hay un middleware genérico en `server.js` que normaliza cualquier campo `*_id` vacío a `null` antes de tocar la base de datos; conviene mantenerlo al agregar endpoints nuevos.
 
-Los módulos que **no** tienen esta capa (infracciones, pólizas, convenios, leasing, caja menor, trámites, solicitudes) necesitan que se introduzca ese mismo patrón antes o durante la conexión — es mecánico, pero hay que hacerlo módulo por módulo.
+Los módulos que **no** tienen ninguna capa de store (infracciones, pólizas, convenios, leasing, caja menor, trámites, solicitudes, operaciones) necesitan que se introduzca el mismo patrón de `sync*` junto a cada mutación local — es mecánico, pero hay que hacerlo módulo por módulo, e idealmente probando con dos sesiones de navegador distintas (como se hizo aquí) para confirmar que lo que un usuario guarda lo ve el otro.
 
-**Orden recomendado de migración** (por impacto operativo, según los badges de pendientes que ya muestra el sidebar):
-1. Vehículos + Conductores + `documentos` compartidos (mayor volumen de datos vencidos/próximos).
-2. Cartera (afecta restricciones operativas de los vehículos).
-3. Validaciones de afiliados / Solicitudes recibidas (flujo con el portal público, ya sin login).
-4. Trámites, Pólizas/Reclamaciones, Convenios, Leasing, Caja menor, Renovaciones mensuales.
-5. Operaciones (contratos/servicios) — depende de decidir primero el diseño de Producción/Liquidación y la integración del motor de despacho.
+**Orden recomendado para lo que falta** (por impacto operativo, según los badges de pendientes que ya muestra el sidebar):
+1. Validaciones de afiliados / Solicitudes recibidas (flujo con el portal público, ya sin login).
+2. Trámites, Pólizas/Reclamaciones, Convenios, Leasing, Caja menor, Renovaciones mensuales.
+3. Operaciones (contratos/servicios) — depende de decidir primero el diseño de Producción/Liquidación y la integración del motor de despacho.
 
 ## 6. Catálogo de endpoints (fase 1, implementados)
 
