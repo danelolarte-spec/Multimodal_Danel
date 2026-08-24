@@ -10,7 +10,9 @@ npm start
 # App disponible en http://localhost:3000
 ```
 
-`server.js` es un servidor Express minimalista que sirve `public/index.html` como estático (con fallback SPA). No hay build step: el frontend es un único archivo HTML que carga React sin JSX/compilador.
+`server.js` levanta la API REST (`/api/...`) y sirve `public/index.html` como estático (con fallback SPA). Al primer arranque crea `data.sqlite` con un usuario administrador y datos de ejemplo.
+
+**Credenciales de la API**: `admin@multimodalgroup.com` / `admin123` (rol `admin`).
 
 ## Stack actual
 
@@ -21,16 +23,19 @@ npm start
   - `Leaflet` — se inyecta dinámicamente solo al entrar al tablero de despacho (mapa de rutas)
   - `Google Maps JavaScript API` — con **API key placeholder** (`TU_API_KEY_DE_GOOGLE_MAPS`), ver sección de integraciones pendientes
   - Google Fonts (Space Grotesk, Inter, JetBrains Mono)
-- **Backend**: solo un servidor estático (`server.js`, Express). **No hay API ni base de datos todavía** — toda la información vive en memoria del navegador (constantes/`useState` inicializados con datos de ejemplo) y **se pierde al recargar la página**. Esto es lo primero a resolver al construir integraciones reales.
-- **Persistencia**: ninguna (ni `localStorage` ni backend). Es un prototipo funcional/demo, no un sistema con datos reales.
+- **Backend**: Node.js + Express + SQLite (`better-sqlite3`) + sesiones (`express-session`/`bcryptjs`). API REST real con autenticación por rol, cubriendo Flota, Cartera, Infracciones, Pólizas/Reclamaciones, Convenios, Leasing, Renovaciones mensuales, Caja menor, Trámites, Portal de afiliación/Solicitudes, y Contratos/Servicios de Operaciones. Ver diseño completo y catálogo de endpoints en [`docs/BACKEND_DESIGN.md`](docs/BACKEND_DESIGN.md).
+- **Persistencia**: SQLite (`data.sqlite`, no versionado). **El frontend todavía NO está conectado a esta API** — sigue operando sobre los arreglos mock (`vehiculos0`, `conductores0`, etc.) y pierde los cambios al recargar. Conectar cada módulo es el siguiente paso; la estrategia de migración sin reescribir la UI está documentada en `docs/BACKEND_DESIGN.md` §5.
 
 ## Estructura del repo
 
 ```
-server.js            # servidor estático Express
+server.js            # servidor Express: API REST + estático
+database.js          # esquema SQLite (better-sqlite3) y seed inicial
+docs/
+  BACKEND_DESIGN.md   # diseño del backend, modelo de datos y catálogo de endpoints
 package.json
 public/
-  index.html          # aplicación completa (frontend + datos mock)
+  index.html          # aplicación completa (frontend + datos mock, aún sin conectar a la API)
 ```
 
 ## Arquitectura de la aplicación (dentro de `index.html`)
@@ -84,19 +89,21 @@ public/
 
 ## Datos y estado
 
-No hay modelo de datos persistente. Cada módulo mantiene su propio `useState` inicializado con arreglos de ejemplo definidos como constantes en el mismo archivo (`vehiculos0`, `conductores0`, `infracciones0`, `AFILIADO_DEMO`, `TARIFAS`, etc.). No existen llamadas `fetch` a un backend propio (la única referencia a `fetch` está dentro del motor de despacho, cargado como texto). Esto significa:
+**Backend**: ya existe un modelo de datos persistente completo en SQLite (`database.js`) con API REST (`server.js`) — ver `docs/BACKEND_DESIGN.md`.
+
+**Frontend**: por ahora sigue sin conectar. Cada módulo de `index.html` mantiene su propio `useState` inicializado con arreglos de ejemplo definidos como constantes en el mismo archivo (`vehiculos0`, `conductores0`, `infracciones0`, `AFILIADO_DEMO`, `TARIFAS`, etc.), sin llamadas `fetch` a la API real. Esto significa que, hasta que se haga la conexión módulo por módulo:
 
 - Todo cambio hecho en la UI se pierde al recargar.
-- No hay autenticación real (`USUARIO` es una constante fija).
-- Cualquier integración nueva requiere primero decidir cómo se persistirán los datos (API REST propia, base de datos, etc.) y reemplazar los `useState(seed)` por llamadas reales.
+- No hay autenticación real en el frontend (`USUARIO` sigue siendo una constante fija, aunque la API ya soporta login/roles).
 
 ## Integraciones pendientes / puntos de extensión
 
-1. **Backend real / API + base de datos** — hoy no existe. Es el prerequisito para que cualquier módulo (flota, cartera, operaciones) sea funcional más allá de una demo.
+1. **Conectar el frontend a la API real** — el backend ya existe (`docs/BACKEND_DESIGN.md`); falta reemplazar los `useState(seed)`/funciones "store" del frontend por `fetch` a los endpoints, módulo por módulo (orden recomendado en el diseño, §5).
 2. **Google Maps** — la API key es un placeholder (`TU_API_KEY_DE_GOOGLE_MAPS`, línea 15 de `index.html`). Sin ella, `AddressField`/`ParadasField` funcionan como texto libre, sin autocompletar ni geolocalizar. Se recomienda mover la key a una variable de entorno inyectada por el servidor en vez de dejarla hardcodeada en el HTML.
-3. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real.
-4. **Exportación/importación Excel** — ya integrada vía SheetJS (`xlsx`), reutilizable para nuevas integraciones de reportes.
-5. **Módulos reservados** — el `HomeERP` ya contempla un módulo "Comercial" y varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio.
+3. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
+4. **Carga de archivos** — la API modela `archivo_url`/`comprobante_url`/`foto_url` como texto; falta el endpoint de subida real (ver `docs/BACKEND_DESIGN.md` §7).
+5. **Exportación/importación Excel** — ya integrada vía SheetJS (`xlsx`), reutilizable para nuevas integraciones de reportes.
+6. **Módulos reservados** — el `HomeERP` ya contempla un módulo "Comercial" y varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio.
 
 ## Notas para seguir desarrollando
 
