@@ -21775,6 +21775,85 @@ function AuthGate() {
   return React.createElement(App, null);
 }
 
+function CambiarPasswordModal({ open, onClose, toast }) {
+  const [actual, setActual] = React.useState('');
+  const [nueva, setNueva] = React.useState('');
+  const [confirmar, setConfirmar] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  function close() {
+    setActual('');
+    setNueva('');
+    setConfirmar('');
+    setError('');
+    onClose();
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (nueva.length < 8) {
+      setError('La contraseña nueva debe tener al menos 8 caracteres');
+      return;
+    }
+    if (nueva !== confirmar) {
+      setError('Las contraseñas nuevas no coinciden');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: actual, newPassword: nueva }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'No se pudo cambiar la contraseña');
+      }
+      toast('Contraseña actualizada correctamente', 'success');
+      close();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement(Modal, { open, onClose: close, title: 'Cambiar contraseña' },
+    React.createElement('form', { onSubmit: submit },
+      React.createElement('div', { className: 'mb' },
+        error && React.createElement(Alert, { type: 'danger' }, error),
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Contraseña actual *'),
+          React.createElement('input', { className: 'fi', type: 'password', value: actual, onChange: e => setActual(e.target.value), required: true, autoComplete: 'current-password' })
+        ),
+        React.createElement('div', { className: 'fg mt3' },
+          React.createElement('label', { className: 'fl' }, 'Contraseña nueva *'),
+          React.createElement('input', { className: 'fi', type: 'password', value: nueva, onChange: e => setNueva(e.target.value), required: true, minLength: 8, autoComplete: 'new-password' })
+        ),
+        React.createElement('div', { className: 'fg mt3' },
+          React.createElement('label', { className: 'fl' }, 'Confirmar contraseña nueva *'),
+          React.createElement('input', { className: 'fi', type: 'password', value: confirmar, onChange: e => setConfirmar(e.target.value), required: true, minLength: 8, autoComplete: 'new-password' })
+        )
+      ),
+      React.createElement('div', { className: 'mf' },
+        React.createElement('button', { type: 'button', className: 'btn bs', onClick: close }, 'Cancelar'),
+        React.createElement('button', { type: 'submit', className: 'btn bp', disabled: loading }, loading ? 'Guardando…' : 'Cambiar contraseña')
+      )
+    )
+  );
+}
+function CambiarPasswordButton({ toast }) {
+  const [open, setOpen] = React.useState(false);
+  return React.createElement(React.Fragment, null,
+    React.createElement('button', { className: 'bi', title: 'Cambiar contraseña', onClick: () => setOpen(true) }, '🔑'),
+    React.createElement(CambiarPasswordModal, { open, onClose: () => setOpen(false), toast })
+  );
+}
+
 function App() {
   const [showHome, setShowHome] = useState(true);
   const [topMod, setTopMod] = useState(null);
@@ -21913,7 +21992,7 @@ function App() {
     className: "bi",
     title: "Panel principal",
     onClick: () => { setShowHome(true); setTopMod(null); }
-  }, "🏠"), /*#__PURE__*/React.createElement("button", {
+  }, "🏠"), /*#__PURE__*/React.createElement(CambiarPasswordButton, { toast }), /*#__PURE__*/React.createElement("button", {
     className: "bi",
     title: "Cerrar sesión",
     onClick: pigLogout
