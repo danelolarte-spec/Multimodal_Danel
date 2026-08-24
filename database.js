@@ -286,7 +286,9 @@ CREATE TABLE IF NOT EXISTS servicios (
   conductor_id TEXT REFERENCES conductores(id) ON DELETE SET NULL,
   origen TEXT, destino TEXT, origen_geo TEXT, destino_geo TEXT, -- geo: JSON {lat,lng}
   estado TEXT NOT NULL DEFAULT 'Pendiente', -- Pendiente | Asignado | En Curso | Finalizado | Cancelado | Liquidado
-  valor INTEGER, pax INTEGER, obs TEXT
+  valor INTEGER, pax INTEGER, obs TEXT,
+  campos TEXT, -- JSON: respuestas a los campos personalizados del cliente (contrato_campos)
+  liquidacion TEXT -- JSON: {tarifaConfirmada, novedades, valorAPagar, pagarA, terceroNombre, fecha}
 );
 
 -- ───────────────────────── EXTRACTOS (FUEC — Resolución 6652 de 2019, Mintransporte) ─────────────────────────
@@ -308,6 +310,7 @@ CREATE TABLE IF NOT EXISTS extracto_clientes (
   nombre TEXT NOT NULL, documento TEXT, direccion TEXT, telefono TEXT, email TEXT,
   es_icbf INTEGER NOT NULL DEFAULT 0,
   es_corporativo INTEGER NOT NULL DEFAULT 0,
+  formulario_disenado INTEGER NOT NULL DEFAULT 0, -- Operaciones ya diseñó los campos del formulario de servicios de este cliente
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -341,6 +344,7 @@ CREATE TABLE IF NOT EXISTS extractos (
   numero_fuec TEXT NOT NULL UNIQUE, -- 21 dígitos, Art. 4 de la resolución
   contrato_id TEXT NOT NULL REFERENCES extracto_contratos(id),
   vehiculo_id TEXT NOT NULL REFERENCES vehiculos(id),
+  tarifario_item_id INTEGER REFERENCES tarifario_items(id), -- ruta/servicio tarifado usado (copiado a origen/destino abajo)
   origen TEXT, destino TEXT,
   fecha_inicio TEXT NOT NULL, fecha_fin TEXT NOT NULL,
   estado TEXT NOT NULL DEFAULT 'VIGENTE', -- VIGENTE | VENCIDO | ANULADO
@@ -369,12 +373,15 @@ CREATE TABLE IF NOT EXISTS extracto_historial (
 
 -- Tarifario comercial: tarifa aplicable a un cliente por tipo de servicio + tipo de vehículo
 -- (y opcionalmente origen/destino), con el valor cobrado al cliente y lo que se le paga al
--- afiliado/convenio por ese servicio. Lo crea el módulo Comercial al dar de alta un cliente.
+-- afiliado/convenio por ese servicio. Lo crea y mantiene el módulo Comercial — es la única fuente
+-- de rutas/servicios del cliente: no hay límite de filas, y el contrato no restringe cuáles aplican.
+-- Operaciones lo consume tal cual para generar servicios, y Trámites para generar extractos.
 CREATE TABLE IF NOT EXISTS tarifario_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cliente_id TEXT NOT NULL REFERENCES extracto_clientes(id) ON DELETE CASCADE,
   tipo_servicio TEXT NOT NULL,
   tipo_vehiculo TEXT NOT NULL,
+  descripcion TEXT,
   origen TEXT, destino TEXT,
   valor_servicio INTEGER NOT NULL DEFAULT 0,
   pago_afiliado INTEGER NOT NULL DEFAULT 0,
@@ -382,6 +389,22 @@ CREATE TABLE IF NOT EXISTS tarifario_items (
 );
 CREATE INDEX IF NOT EXISTS idx_tarifario_cliente ON tarifario_items(cliente_id);
 `);
+
+// Migraciones ligeras: agrega columnas nuevas a tablas que ya existían en despliegues previos
+// (CREATE TABLE IF NOT EXISTS no modifica una tabla que ya existe con el disco persistente de Render).
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+ensureColumn('tarifario_items', 'descripcion', 'TEXT');
+ensureColumn('extracto_clientes', 'formulario_disenado', 'INTEGER NOT NULL DEFAULT 0');
+// Vincula un contrato de Operaciones (contratos.id) con el cliente corporativo de Comercial del que
+// se generó automáticamente al aprobarse su contrato en Trámites — así Operaciones consume el mismo
+// tarifario (tarifario_items) y usa contrato_campos para diseñar el formulario de servicios de ese cliente.
+ensureColumn('contratos', 'extracto_cliente_id', 'TEXT REFERENCES extracto_clientes(id)');
+ensureColumn('servicios', 'campos', 'TEXT');
+ensureColumn('servicios', 'liquidacion', 'TEXT');
+ensureColumn('extractos', 'tarifario_item_id', 'INTEGER REFERENCES tarifario_items(id)');
 
 function seedIfEmpty() {
   const userCount = db.prepare('SELECT COUNT(*) n FROM users').get().n;

@@ -604,18 +604,18 @@ app.put('/api/solicitudes/:id', requireRole('admin', 'tramites'), (req, res) => 
 });
 
 // ───────────────────────── Operaciones: Contratos ─────────────────────────
-function contratoConDetalle(k) {
+function opContratoConDetalle(k) {
   return {
     ...k,
     productos: db.prepare('SELECT producto, tarifa FROM contrato_productos WHERE contrato_id=?').all(k.id),
     conductorIds: db.prepare('SELECT conductor_id FROM contrato_conductores WHERE contrato_id=?').all(k.id).map((r) => r.conductor_id),
-    campos: db.prepare('SELECT nombre, tipo, req, opciones, orden FROM contrato_campos WHERE contrato_id=? ORDER BY orden').all(k.id)
+    campos: db.prepare('SELECT id, nombre, tipo, req, opciones, orden FROM contrato_campos WHERE contrato_id=? ORDER BY orden').all(k.id)
       .map((c) => ({ ...c, opciones: c.opciones ? JSON.parse(c.opciones) : undefined })),
   };
 }
 
 app.get('/api/contratos', requireAuth, (req, res) => {
-  res.json(db.prepare('SELECT * FROM contratos ORDER BY nombre').all().map(contratoConDetalle));
+  res.json(db.prepare('SELECT * FROM contratos ORDER BY nombre').all().map(opContratoConDetalle));
 });
 
 app.post('/api/contratos', requireRole('admin', 'operaciones'), (req, res) => {
@@ -632,27 +632,51 @@ app.post('/api/contratos', requireRole('admin', 'operaciones'), (req, res) => {
       .run(id, c.nombre, c.tipo, c.req ? 1 : 0, c.opciones ? JSON.stringify(c.opciones) : null, i));
   });
   tx();
-  res.status(201).json(contratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(id)));
+  res.status(201).json(opContratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(id)));
 });
 
 app.put('/api/contratos/:id', requireRole('admin', 'operaciones'), (req, res) => {
   const cols = ['nombre','nit','tipo','estado','valor','logistico_nombre'];
   const present = cols.filter((c) => c in req.body);
   if (present.length) db.prepare(`UPDATE contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run({ ...req.body, id: req.params.id });
-  res.json(contratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(req.params.id)));
+  res.json(opContratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(req.params.id)));
+});
+
+// Campos personalizados del formulario de servicios de este contrato (además de los campos por
+// defecto del formulario). Los diseña Operaciones — para un contrato vinculado a un cliente de
+// Comercial (extracto_cliente_id), guardar aquí marca el formulario de ese cliente como diseñado.
+app.put('/api/contratos/:id/campos', requireRole('admin', 'operaciones'), (req, res) => {
+  const contrato = db.prepare('SELECT * FROM contratos WHERE id=?').get(req.params.id);
+  if (!contrato) return res.status(404).json({ error: 'No encontrado' });
+  const campos = Array.isArray(req.body.campos) ? req.body.campos : [];
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM contrato_campos WHERE contrato_id=?').run(req.params.id);
+    const ins = db.prepare('INSERT INTO contrato_campos (contrato_id, nombre, tipo, req, opciones, orden) VALUES (?,?,?,?,?,?)');
+    campos.forEach((c, i) => ins.run(req.params.id, c.nombre, c.tipo, c.req ? 1 : 0, c.opciones ? JSON.stringify(c.opciones) : null, i));
+    if (contrato.extracto_cliente_id) {
+      db.prepare('UPDATE extracto_clientes SET formulario_disenado=1 WHERE id=?').run(contrato.extracto_cliente_id);
+    }
+  });
+  tx();
+  res.json(opContratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(req.params.id)));
 });
 
 // ───────────────────────── Operaciones: Servicios ─────────────────────────
+function servicioConDetalle(s) {
+  return {
+    ...s,
+    origenGeo: s.origen_geo ? JSON.parse(s.origen_geo) : null,
+    destinoGeo: s.destino_geo ? JSON.parse(s.destino_geo) : null,
+    campos: s.campos ? JSON.parse(s.campos) : {},
+    liquidacion: s.liquidacion ? JSON.parse(s.liquidacion) : null,
+  };
+}
 app.get('/api/servicios', requireAuth, (req, res) => {
   let sql = 'SELECT * FROM servicios';
   const params = [];
   if (req.query.fecha) { sql += ' WHERE fecha = ?'; params.push(req.query.fecha); }
   sql += ' ORDER BY fecha, hora';
-  res.json(db.prepare(sql).all(...params).map((s) => ({
-    ...s,
-    origenGeo: s.origen_geo ? JSON.parse(s.origen_geo) : null,
-    destinoGeo: s.destino_geo ? JSON.parse(s.destino_geo) : null,
-  })));
+  res.json(db.prepare(sql).all(...params).map(servicioConDetalle));
 });
 
 app.post('/api/servicios', requireRole('admin', 'operaciones'), (req, res) => {
@@ -661,16 +685,19 @@ app.post('/api/servicios', requireRole('admin', 'operaciones'), (req, res) => {
   const row = Object.fromEntries(cols.map((c) => [c, req.body[c] ?? null]));
   row.id = id;
   row.estado = row.estado || 'Pendiente';
-  db.prepare(`INSERT INTO servicios (id, ${cols.join(',')}, origen_geo, destino_geo) VALUES (@id, ${cols.map((c) => '@' + c).join(',')}, @origen_geo, @destino_geo)`)
-    .run({ ...row, origen_geo: req.body.origenGeo ? JSON.stringify(req.body.origenGeo) : null, destino_geo: req.body.destinoGeo ? JSON.stringify(req.body.destinoGeo) : null });
-  res.status(201).json(db.prepare('SELECT * FROM servicios WHERE id=?').get(id));
+  db.prepare(`INSERT INTO servicios (id, ${cols.join(',')}, origen_geo, destino_geo, campos) VALUES (@id, ${cols.map((c) => '@' + c).join(',')}, @origen_geo, @destino_geo, @campos)`)
+    .run({ ...row, origen_geo: req.body.origenGeo ? JSON.stringify(req.body.origenGeo) : null, destino_geo: req.body.destinoGeo ? JSON.stringify(req.body.destinoGeo) : null, campos: req.body.campos ? JSON.stringify(req.body.campos) : null });
+  res.status(201).json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(id)));
 });
 
 app.put('/api/servicios/:id', requireRole('admin', 'operaciones'), (req, res) => {
   const cols = ['fecha','hora','contrato_id','producto','vehiculo_id','conductor_id','origen','destino','estado','valor','pax','obs'];
   const present = cols.filter((c) => c in req.body);
-  if (present.length) db.prepare(`UPDATE servicios SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run({ ...req.body, id: req.params.id });
-  res.json(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id));
+  const body = { ...req.body, id: req.params.id };
+  if ('campos' in req.body) { present.push('campos'); body.campos = req.body.campos ? JSON.stringify(req.body.campos) : null; }
+  if ('liquidacion' in req.body) { present.push('liquidacion'); body.liquidacion = req.body.liquidacion ? JSON.stringify(req.body.liquidacion) : null; }
+  if (present.length) db.prepare(`UPDATE servicios SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+  res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));
 });
 
 // ───────────────────────── Extractos (FUEC) — Resolución 6652/2019 Mintransporte ─────────────────────────
@@ -697,13 +724,14 @@ function docVigenteEn(doc, fecha) {
 
 // Devuelve null si puede generarse, o el mensaje de bloqueo específico (nunca genérico,
 // tal como exige el documento de proceso) si no.
-function validarGeneracionExtracto({ contrato, cliente, vehiculo, conductores, fechaInicio, fechaFin, origen, destino, generadoPorTipo }) {
+function validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo }) {
   if (!contrato) return 'Contrato vencido';
   if (contrato.estado !== 'APROBADO') return 'Cliente no autorizado';
   if (fechaInicio < contrato.fecha_inicio || fechaFin > contrato.fecha_fin) return 'Contrato vencido';
   if (contrato.requiere_convenio && !contrato.convenio_colaboracion) return 'Convenio inexistente';
-  if (contrato.origen && origen && contrato.origen.trim().toLowerCase() !== origen.trim().toLowerCase()) return 'Ruta no autorizada';
-  if (contrato.destino && destino && contrato.destino.trim().toLowerCase() !== destino.trim().toLowerCase()) return 'Ruta no autorizada';
+  // La ruta/tipo de servicio la valida el tarifario del cliente (Comercial), no el contrato: un
+  // contrato puede tener cualquier cantidad de rutas tarifadas — ver docs/BACKEND_DESIGN.md §9.
+  if (!tarifarioItem) return 'Ruta no autorizada';
 
   if (generadoPorTipo === 'AFILIADO') {
     if (cliente.es_icbf || cliente.es_corporativo) return 'Cliente no autorizado';
@@ -779,9 +807,9 @@ app.put('/api/extractos/clientes/:id/tarifario', requireRole('admin', 'tramites'
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM tarifario_items WHERE cliente_id=?').run(req.params.id);
     const ins = db.prepare(`INSERT INTO tarifario_items
-      (cliente_id, tipo_servicio, tipo_vehiculo, origen, destino, valor_servicio, pago_afiliado, orden)
-      VALUES (?,?,?,?,?,?,?,?)`);
-    items.forEach((it, i) => ins.run(req.params.id, it.tipoServicio, it.tipoVehiculo, it.origen || null, it.destino || null, +it.valorServicio || 0, +it.pagoAfiliado || 0, i));
+      (cliente_id, tipo_servicio, tipo_vehiculo, descripcion, origen, destino, valor_servicio, pago_afiliado, orden)
+      VALUES (?,?,?,?,?,?,?,?,?)`);
+    items.forEach((it, i) => ins.run(req.params.id, it.tipoServicio, it.tipoVehiculo, it.descripcion || null, it.origen || null, it.destino || null, +it.valorServicio || 0, +it.pagoAfiliado || 0, i));
   });
   tx();
   res.json(db.prepare('SELECT * FROM tarifario_items WHERE cliente_id=? ORDER BY orden').all(req.params.id));
@@ -857,6 +885,20 @@ app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operac
         .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
       db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion, nota) VALUES (?,?,?,?)")
         .run(req.params.id, usuario, `Cambió estado a: ${CONTRATO_ESTADO_LABEL[req.body.estado] || req.body.estado}`, req.body.motivoDevolucion || '');
+      // Al aprobar, habilita al cliente para Operaciones: crea (o reactiva) su contrato vinculado
+      // en /api/contratos, para que consuma el mismo tarifario del cliente y pueda diseñar/usar
+      // el formulario de servicios (contrato_campos) — ver docs/BACKEND_DESIGN.md §9.
+      if (req.body.estado === 'APROBADO') {
+        const cliente = db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(contrato.cliente_id);
+        const opId = 'com-' + contrato.cliente_id;
+        const opContrato = db.prepare('SELECT id FROM contratos WHERE id=?').get(opId);
+        if (opContrato) {
+          db.prepare("UPDATE contratos SET nombre=?, estado='Activo' WHERE id=?").run(cliente.nombre, opId);
+        } else {
+          db.prepare('INSERT INTO contratos (id, nombre, nit, tipo, estado, extracto_cliente_id) VALUES (?,?,?,?,?,?)')
+            .run(opId, cliente.nombre, cliente.documento || null, 'Corporativo', 'Activo', contrato.cliente_id);
+        }
+      }
     }
   });
   try { tx(); } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
@@ -925,15 +967,18 @@ app.get('/api/extractos/:id', requireAuth, (req, res) => {
   res.json(extractoConDetalle(e));
 });
 
-function crearExtracto({ contratoId, vehiculoId, conductorIds, fechaInicio, fechaFin, origen, destino, generadoPorTipo, usuario, duplicadoDeId }) {
+function crearExtracto({ contratoId, vehiculoId, conductorIds, tarifarioItemId, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId }) {
   const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(contratoId);
   const cliente = contrato && db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(contrato.cliente_id);
+  const tarifarioItem = contrato && tarifarioItemId
+    ? db.prepare('SELECT * FROM tarifario_items WHERE id=? AND cliente_id=?').get(tarifarioItemId, contrato.cliente_id)
+    : null;
   const vehiculo = vehiculoId && vehiculoConDetalle(db.prepare('SELECT * FROM vehiculos WHERE id=?').get(vehiculoId));
   if (!vehiculo) return { error: 'Vehículo no encontrado' };
   const conductores = (conductorIds || []).map((id) => conductorConDetalle(db.prepare('SELECT * FROM conductores WHERE id=?').get(id))).filter(Boolean);
   if (!conductores.length) return { error: 'Debe indicar al menos un conductor' };
 
-  const errorValidacion = validarGeneracionExtracto({ contrato, cliente, vehiculo, conductores, fechaInicio, fechaFin, origen, destino, generadoPorTipo });
+  const errorValidacion = validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo });
   if (errorValidacion) return { error: errorValidacion };
 
   const id = newId('ext');
@@ -942,9 +987,9 @@ function crearExtracto({ contratoId, vehiculoId, conductorIds, fechaInicio, fech
     const numeroExtracto = (db.prepare('SELECT COUNT(*) n FROM extractos WHERE contrato_id=?').get(contratoId).n) + 1;
     const numeroFuec = generarNumeroFuec(contrato.numero, numeroExtracto);
     db.prepare(`INSERT INTO extractos
-      (id, numero_fuec, contrato_id, vehiculo_id, origen, destino, fecha_inicio, fecha_fin, generado_por_tipo, generado_por, declaracion_aceptada_en, duplicado_de_id, qr_token)
-      VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?)`)
-      .run(id, numeroFuec, contratoId, vehiculoId, origen || contrato.origen, destino || contrato.destino, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId || null, qrToken);
+      (id, numero_fuec, contrato_id, vehiculo_id, tarifario_item_id, origen, destino, fecha_inicio, fecha_fin, generado_por_tipo, generado_por, declaracion_aceptada_en, duplicado_de_id, qr_token)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?)`)
+      .run(id, numeroFuec, contratoId, vehiculoId, tarifarioItem.id, tarifarioItem.origen, tarifarioItem.destino, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId || null, qrToken);
     conductores.forEach((c, i) => db.prepare('INSERT INTO extracto_conductores (extracto_id, conductor_id, orden) VALUES (?,?,?)').run(id, c.id, i + 1));
     db.prepare("INSERT INTO extracto_historial (extracto_id, usuario, accion, nota) VALUES (?,?,?,?)")
       .run(id, usuario, duplicadoDeId ? 'Extracto duplicado' : 'Extracto generado', '');
@@ -972,7 +1017,8 @@ app.post('/api/extractos/:id/duplicar', requireAuth, (req, res) => {
   const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
   const result = crearExtracto({
     contratoId: original.contrato_id, vehiculoId: b.vehiculoId || original.vehiculo_id, conductorIds,
-    fechaInicio: b.fechaInicio, fechaFin: b.fechaFin, origen: original.origen, destino: original.destino,
+    tarifarioItemId: original.tarifario_item_id,
+    fechaInicio: b.fechaInicio, fechaFin: b.fechaFin,
     generadoPorTipo: original.generado_por_tipo, usuario, duplicadoDeId: original.id,
   });
   if (result.error) return res.status(422).json({ error: result.error });

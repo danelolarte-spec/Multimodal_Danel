@@ -17371,6 +17371,39 @@ function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
   const [motivo, setMotivo] = React.useState('');
   const [archivoUrl, setArchivoUrl] = React.useState('');
   const [showGenerarDoc, setShowGenerarDoc] = React.useState(false);
+  const [tarifario, setTarifario] = React.useState([]);
+  const [editandoTarifario, setEditandoTarifario] = React.useState(false);
+  const [tarifarioEdit, setTarifarioEdit] = React.useState([]);
+  const [guardandoTarifario, setGuardandoTarifario] = React.useState(false);
+
+  function cargarTarifario() {
+    if (!contrato) return;
+    extApiGet(`/api/extractos/clientes/${contrato.cliente.id}/tarifario`).then(setTarifario).catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { if (open) cargarTarifario(); else setEditandoTarifario(false); }, [open, contrato]);
+
+  function iniciarEdicionTarifario() {
+    setTarifarioEdit(tarifario.map(t => ({
+      tipoServicio: t.tipo_servicio, tipoVehiculo: t.tipo_vehiculo, descripcion: t.descripcion || '',
+      origen: t.origen || '', destino: t.destino || '', valorServicio: t.valor_servicio, pagoAfiliado: t.pago_afiliado,
+    })));
+    setEditandoTarifario(true);
+  }
+  async function guardarTarifarioContrato() {
+    if (tarifarioEdit.some(r => !r.valorServicio)) { toast('Todas las filas deben tener un valor para el cliente', 'danger'); return; }
+    setGuardandoTarifario(true);
+    try {
+      await extApiSend('PUT', `/api/extractos/clientes/${contrato.cliente.id}/tarifario`, { items: tarifarioEdit });
+      toast('Tarifario actualizado', 'success');
+      setEditandoTarifario(false);
+      cargarTarifario();
+    } catch (e) {
+      toast(e.message, 'danger');
+    } finally {
+      setGuardandoTarifario(false);
+    }
+  }
+
   if (!open || !contrato) return null;
   const est = EXT_ESTADOS_CONTRATO[contrato.estado] || { label: contrato.estado, badge: 'bgr' };
 
@@ -17429,6 +17462,35 @@ function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
         )
       ),
       contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
+      rc('div', { className: 'mt3' },
+        rc('div', { className: 'flex fjb', style: { alignItems: 'center', marginBottom: 8 } },
+          rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario del cliente'),
+          !editandoTarifario && rc('button', { className: 'btn bs btn-sm', onClick: iniciarEdicionTarifario }, '✎ Editar tarifario')
+        ),
+        editandoTarifario
+          ? rc(React.Fragment, null,
+              rc(TarifarioTabla, { items: tarifarioEdit, setItems: setTarifarioEdit }),
+              rc('div', { className: 'flex gap2 mt3' },
+                rc('button', { className: 'btn bs', onClick: () => setEditandoTarifario(false) }, 'Cancelar'),
+                rc('button', { className: 'btn bp', disabled: guardandoTarifario, onClick: guardarTarifarioContrato }, guardandoTarifario ? 'Guardando…' : '✓ Guardar cambios')
+              )
+            )
+          : rc('div', { className: 'tw' }, rc('table', null,
+              rc('thead', null, rc('tr', null, rc('th', null, 'Servicio'), rc('th', null, 'Vehículo'), rc('th', null, 'Descripción'), rc('th', null, 'Origen'), rc('th', null, 'Destino'), rc('th', null, 'Valor cliente'), rc('th', null, 'Pago afiliado'))),
+              rc('tbody', null,
+                tarifario.length === 0 ? rc('tr', null, rc('td', { colSpan: 7 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin tarifas registradas'), rc('p', { className: 'txs' }, 'Se necesita al menos una para poder generar extractos a nombre de este cliente')))) :
+                tarifario.map(t => rc('tr', { key: t.id },
+                  rc('td', null, PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio),
+                  rc('td', null, t.tipo_vehiculo),
+                  rc('td', null, t.descripcion || '—'),
+                  rc('td', null, t.origen || '—'),
+                  rc('td', null, t.destino || '—'),
+                  rc('td', { className: 'tr fbold' }, fmt(t.valor_servicio)),
+                  rc('td', { className: 'tr' }, fmt(t.pago_afiliado))
+                ))
+              )
+            ))
+      ),
       rc('div', { className: 'mt3' },
         rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Historial'),
         (contrato.historial || []).map(hi => rc('div', { key: hi.id, className: 'tl-item' },
@@ -17540,8 +17602,8 @@ function GenerarExtractoForm({ toast, onGenerado }) {
   const [conductorIds, setConductorIds] = React.useState(['']);
   const [fechaInicio, setFechaInicio] = React.useState('');
   const [fechaFin, setFechaFin] = React.useState('');
-  const [origen, setOrigen] = React.useState('');
-  const [destino, setDestino] = React.useState('');
+  const [tarifarioCliente, setTarifarioCliente] = React.useState([]);
+  const [tarifarioItemId, setTarifarioItemId] = React.useState('');
   const [generadoPorTipo, setGeneradoPorTipo] = React.useState('EMPRESA');
   const [acepta, setAcepta] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -17553,7 +17615,9 @@ function GenerarExtractoForm({ toast, onGenerado }) {
 
   const contrato = contratos.find(c => c.id === contratoId);
   React.useEffect(() => {
-    if (contrato) { setOrigen(contrato.origen || ''); setDestino(contrato.destino || ''); }
+    setTarifarioItemId('');
+    if (!contrato) { setTarifarioCliente([]); return; }
+    extApiGet(`/api/extractos/clientes/${contrato.cliente.id}/tarifario`).then(setTarifarioCliente).catch(e => toast(e.message, 'danger'));
   }, [contratoId]);
 
   const vehiculos = getVehiculosStore().filter(v => v.estado === 'Activo');
@@ -17566,12 +17630,13 @@ function GenerarExtractoForm({ toast, onGenerado }) {
   async function generar() {
     setError('');
     if (!contratoId || !vehiculoId || !fechaInicio || !fechaFin) { setError('Completa contrato, vehículo y vigencia del extracto'); return; }
+    if (!tarifarioItemId) { setError('Selecciona el servicio y ruta tarifados al cliente'); return; }
     if (!acepta) { setError('Debes aceptar la declaración de responsabilidad'); return; }
     setLoading(true);
     try {
       const extracto = await extApiSend('POST', '/api/extractos', {
         contratoId, vehiculoId, conductorIds: conductorIds.filter(Boolean),
-        fechaInicio, fechaFin, origen, destino, generadoPorTipo, aceptaDeclaracion: true,
+        fechaInicio, fechaFin, tarifarioItemId: Number(tarifarioItemId), generadoPorTipo, aceptaDeclaracion: true,
       });
       toast(`Extracto ${extracto.numero_fuec} generado`, 'success');
       setContratoId(''); setVehiculoId(''); setConductorIds(['']); setFechaInicio(''); setFechaFin(''); setAcepta(false);
@@ -17611,12 +17676,12 @@ function GenerarExtractoForm({ toast, onGenerado }) {
         rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha fin *'),
           rc('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) })),
       ),
-      rc('div', { className: 'fg2' },
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
-          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
-          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
-      ),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Servicio y ruta (tarifario del cliente) *'),
+        rc('select', { className: 'fsel', value: tarifarioItemId, disabled: !contratoId, onChange: e => setTarifarioItemId(e.target.value) },
+          rc('option', { value: '' }, contratoId ? '— Seleccionar —' : 'Primero selecciona el contrato'),
+          tarifarioCliente.map(t => rc('option', { key: t.id, value: t.id },
+            `${PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio}${t.descripcion ? ' — ' + t.descripcion : ''} — ${t.origen || '—'} → ${t.destino || '—'} (${t.tipo_vehiculo})`)))),
+      contratoId && tarifarioCliente.length === 0 && rc('div', { className: 'al al-warn' }, 'Este cliente no tiene rutas/servicios tarifados — agrégalos desde el módulo Comercial antes de generar el extracto.'),
       rc('div', { className: 'al al-info', style: { marginTop: 12 } },
         rc('label', { className: 'flex gap2', style: { alignItems: 'flex-start', cursor: 'pointer' } },
           rc('input', { type: 'checkbox', checked: acepta, onChange: e => setAcepta(e.target.checked), style: { marginTop: 2 } }),
@@ -20706,14 +20771,34 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
   const [nuevaRuta, setNuevaRuta] = React.useState(false);
   const [tarifaAfiliado, setTarifaAfiliado] = React.useState(0);
   const [guardarEnContrato, setGuardarEnContrato] = React.useState(true);
+  const [tarifarioReal, setTarifarioReal] = React.useState([]);
   const set = k => e => setF(p => Object.assign({}, p, { [k]: e.target.value }));
   const setCampo = (campoId, val) => setF(p => Object.assign({}, p, { campos: Object.assign({}, p.campos, { [campoId]: val }) }));
   const k = contratos.find(x => x.id === f.contratoId);
-  const tarifario = (k && k.productos) || [];
+  const esReal = !!(k && k.extracto_cliente_id);
+  const tarifario = esReal ? [] : ((k && k.productos) || []);
+
+  React.useEffect(() => {
+    if (k && k.extracto_cliente_id) {
+      extApiGet(`/api/extractos/clientes/${k.extracto_cliente_id}/tarifario`).then(setTarifarioReal).catch(() => setTarifarioReal([]));
+    } else {
+      setTarifarioReal([]);
+    }
+  }, [f.contratoId]);
 
   const setRuta = e => {
     const val = e.target.value;
     setRutaSel(val);
+    if (esReal) {
+      const item = tarifarioReal.find(x => String(x.id) === val);
+      setF(p => Object.assign({}, p, {
+        producto: item ? item.tipo_servicio : '',
+        valor: item ? item.valor_servicio : 0,
+        origen: item && item.origen ? item.origen : p.origen,
+        destino: item && item.destino ? item.destino : p.destino,
+      }));
+      return;
+    }
     if (val === '__nueva__') {
       setNuevaRuta(true);
       setTarifaAfiliado(0);
@@ -20737,7 +20822,7 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
 
   const save = () => {
     if (!f.fecha || !f.hora || !f.origen || !f.destino || !f.contratoId) { alert('Fecha, hora, origen, destino y contrato son obligatorios'); return; }
-    if (nuevaRuta && guardarEnContrato && f.producto && k) {
+    if (!esReal && nuevaRuta && guardarEnContrato && f.producto && k) {
       const entry = { producto: f.producto, tarifa: Number(f.valor) || 0, tarifaAfiliado: Number(tarifaAfiliado) || 0 };
       if (f.producto === 'disponibilidad') entry.cantidadDisponibilidades = 1;
       else { entry.origen = f.origen.trim(); entry.destino = f.destino.trim(); }
@@ -20750,14 +20835,22 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     h('div', { className: 'mb' },
       h('div', { className: 'g2c' },
         h('div', null,
-          h(FG, { label: 'Contrato' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre)))),
-          h(FG, { label: 'Servicio y ruta' + (k ? ' — tarifario de ' + k.nombre : '') },
-            h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
-              h('option', { value: '' }, 'Seleccionar...'),
-              tarifario.map(x => h('option', { key: x.producto, value: x.producto },
-                `${productoLbl(x.producto)} — ${x.producto === 'disponibilidad' ? `${x.cantidadDisponibilidades || 1} disp.` : `${x.origen || '—'} → ${x.destino || '—'}`} (cobrar ${fmt(x.tarifa)}${x.tarifaAfiliado ? ' · pagar ' + fmt(x.tarifaAfiliado) : ''})`)),
-              h('option', { value: '__nueva__' }, '+ Generar nueva ruta / servicio no tarifado'))),
-          nuevaRuta && h('div', { style: { background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, marginBottom: 10 } },
+          h(FG, { label: 'Contrato' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre + (c.extracto_cliente_id ? ' (Comercial)' : ''))))),
+          esReal
+            ? h(FG, { label: 'Servicio y ruta — tarifario de ' + k.nombre + ' (Comercial)' },
+                h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
+                  h('option', { value: '' }, 'Seleccionar...'),
+                  tarifarioReal.map(t => h('option', { key: t.id, value: String(t.id) },
+                    `${PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio}${t.descripcion ? ' — ' + t.descripcion : ''} — ${t.origen || '—'} → ${t.destino || '—'} (cobrar ${fmt(t.valor_servicio)}${t.pago_afiliado ? ' · pagar ' + fmt(t.pago_afiliado) : ''})`))))
+            : h(FG, { label: 'Servicio y ruta' + (k ? ' — tarifario de ' + k.nombre : '') },
+                h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
+                  h('option', { value: '' }, 'Seleccionar...'),
+                  tarifario.map(x => h('option', { key: x.producto, value: x.producto },
+                    `${productoLbl(x.producto)} — ${x.producto === 'disponibilidad' ? `${x.cantidadDisponibilidades || 1} disp.` : `${x.origen || '—'} → ${x.destino || '—'}`} (cobrar ${fmt(x.tarifa)}${x.tarifaAfiliado ? ' · pagar ' + fmt(x.tarifaAfiliado) : ''})`)),
+                  h('option', { value: '__nueva__' }, '+ Generar nueva ruta / servicio no tarifado'))),
+          esReal && rutaSel === '' && tarifarioReal.length === 0 && h('div', { className: 'al al-warn', style: { marginBottom: 10 } }, 'Este cliente todavía no tiene rutas/servicios tarifados — pídele a Comercial que los cargue antes de crear el servicio.'),
+          esReal && h('div', { className: 'txs tmut', style: { marginBottom: 10 } }, 'El tarifario de este cliente lo administra Comercial — si necesitas una ruta o servicio que no está aquí, pídele que lo agregue.'),
+          !esReal && nuevaRuta && h('div', { style: { background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, marginBottom: 10 } },
             h('div', { className: 'al al-info mb2' }, 'Este servicio no está tarifado para este cliente. Define el tipo de servicio y, si aplica, la tarifa a cobrar y a pagar.'),
             h('div', { className: 'fg2' },
               h(FG, { label: 'Tipo de servicio' }, h('select', { className: 'fsel', value: f.producto || '', onChange: setProductoNuevo }, h('option', { value: '' }, 'Seleccionar...'), Object.keys(PRODUCTOS_SERVICIO).map(p => h('option', { key: p, value: p }, PRODUCTOS_SERVICIO[p].label)))),
@@ -20923,16 +21016,32 @@ function Servicios({ toast }) {
   const [viewing, setViewing] = useState(null);
   const [liquidando, setLiquidando] = useState(null);
   const [buscado, setBuscado] = useState(false);
+  const [contratosReales, setContratosReales] = useState([]);
 
-  const contratos = getContratosStore();
+  const contratos = [...getContratosStore(), ...contratosReales];
   const vehiculos = habilitadosParaOperar();
   const conductores = conductoresHabilitados();
-  const refresh = () => setList(getServiciosStore().slice());
+  const refresh = () => {
+    setList(getServiciosStore().slice());
+    extApiGet('/api/contratos').then(setContratosReales).catch(e => toast(e.message, 'danger'));
+    extApiGet('/api/servicios').then(real => setList(l => [...getServiciosStore(), ...real])).catch(e => toast(e.message, 'danger'));
+  };
+  useEffect(() => { refresh(); }, []);
   const handleGuardarTarifa = (contratoId, entry) => {
     const kk = contratos.find(x => x.id === contratoId);
     if (!kk) return;
     updateContrato(contratoId, { productos: [...(kk.productos || []).filter(x => x.producto !== entry.producto), entry] });
   };
+
+  function servicioApiBody(s) {
+    return {
+      fecha: s.fecha, hora: s.hora, contrato_id: s.contratoId, producto: s.producto || null,
+      vehiculo_id: s.vehiculoId || null, conductor_id: s.conductorId || null,
+      origen: s.origen, destino: s.destino, origenGeo: s.origenGeo, destinoGeo: s.destinoGeo,
+      estado: s.estado, valor: Number(s.valor) || 0, pax: Number(s.pax) || 1, obs: s.obs || null,
+      campos: s.campos || {},
+    };
+  }
 
   const filtered = !buscado ? [] : list.filter(s => {
     const k = contratos.find(x => x.id === s.contratoId);
@@ -20951,9 +21060,16 @@ function Servicios({ toast }) {
   const buscar = () => setBuscado(true);
   const irAFechaDesdeCalendario = fecha => { setFDesde(fecha); setFHasta(fecha); setBuscado(true); setTab('lista'); };
 
-  const handleSave = s => {
-    if (s.id) { updateServicio(s.id, s); toast('Servicio actualizado'); }
-    else { addServicioStore(s); toast('Servicio creado'); }
+  const handleSave = async s => {
+    const kk = contratos.find(x => x.id === s.contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) {
+        if (s.id) await extApiSend('PUT', `/api/servicios/${s.id}`, servicioApiBody(s));
+        else await extApiSend('POST', '/api/servicios', servicioApiBody(s));
+        toast(s.id ? 'Servicio actualizado' : 'Servicio creado');
+      } else if (s.id) { updateServicio(s.id, s); toast('Servicio actualizado'); }
+      else { addServicioStore(s); toast('Servicio creado'); }
+    } catch (e) { toast(e.message, 'danger'); return; }
     refresh(); setModalOpen(false); setEditing(null);
   };
   const handleDel = id => {
@@ -20961,14 +21077,22 @@ function Servicios({ toast }) {
     delServicioStore(id); refresh();
     toast('Servicio eliminado', 'warning');
   };
-  const handleCancelar = s => {
+  const handleCancelar = async s => {
     if (!window.confirm(`¿Cancelar el servicio ${s.id}? Quedará marcado como Cancelado.`)) return;
-    updateServicio(s.id, { estado: 'Cancelado' });
+    const kk = contratos.find(x => x.id === s.contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) await extApiSend('PUT', `/api/servicios/${s.id}`, { estado: 'Cancelado' });
+      else updateServicio(s.id, { estado: 'Cancelado' });
+    } catch (e) { toast(e.message, 'danger'); return; }
     refresh();
     toast('🚫 Servicio cancelado', 'warning');
   };
-  const handleLiquidar = (s, datos) => {
-    updateServicio(s.id, datos);
+  const handleLiquidar = async (s, datos) => {
+    const kk = contratos.find(x => x.id === s.contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) await extApiSend('PUT', `/api/servicios/${s.id}`, { estado: datos.estado, liquidacion: datos.liquidacion });
+      else updateServicio(s.id, datos);
+    } catch (e) { toast(e.message, 'danger'); return; }
     refresh(); setLiquidando(null);
   };
 
@@ -22410,6 +22534,140 @@ function CargaOperativa({ toast, onGoToDate }) {
   );
 }
 
+// ─────────────────── Clientes Comercial: diseño del formulario de servicios ───────────────────
+// Campos por defecto que ya trae todo servicio (además de los que Operaciones diseñe aquí para
+// cada cliente): fecha, hora, origen/destino, vehículo, conductor, pasajeros y valor.
+const CAMPOS_SERVICIO_DEFECTO = ['Fecha', 'Hora', 'Origen', 'Destino', 'Vehículo', 'Conductor', 'Pasajeros', 'Valor'];
+
+function DisenarFormularioModal({ cliente, open, onClose, toast, onGuardado }) {
+  const [opContrato, setOpContrato] = useState(null);
+  const [tarifario, setTarifario] = useState([]);
+  const [campos, setCampos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [nc, setNc] = useState({ nombre: '', tipo: 'texto', req: false, opcionesTxt: '' });
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    if (!open || !cliente) return;
+    setLoading(true);
+    Promise.all([
+      extApiGet('/api/contratos'),
+      extApiGet(`/api/extractos/clientes/${cliente.id}/tarifario`),
+    ]).then(([ks, t]) => {
+      const k = ks.find(x => x.extracto_cliente_id === cliente.id);
+      setOpContrato(k);
+      setCampos((k?.campos || []).map(c => ({ ...c })));
+      setTarifario(t);
+    }).catch(e => toast(e.message, 'danger')).finally(() => setLoading(false));
+  }, [open, cliente]);
+
+  const addCampo = () => {
+    if (!nc.nombre.trim()) return;
+    if (nc.tipo === 'lista' && !nc.opcionesTxt.trim()) { alert('Agrega al menos un componente de la lista (separados por coma)'); return; }
+    const id = (campos.length ? Math.max.apply(null, campos.map(c => c.id)) : 0) + 1;
+    const campo = { id, nombre: nc.nombre, tipo: nc.tipo, req: nc.req };
+    if (nc.tipo === 'lista') campo.opciones = nc.opcionesTxt.split(',').map(o => o.trim()).filter(Boolean);
+    setCampos(p => [...p, campo]);
+    setNc({ nombre: '', tipo: 'texto', req: false, opcionesTxt: '' });
+  };
+  const delCampo = id => setCampos(p => p.filter(c => c.id !== id));
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      await extApiSend('PUT', `/api/contratos/${opContrato.id}/campos`, { campos });
+      toast('Formulario de servicios guardado', 'success');
+      onGuardado();
+      onClose();
+    } catch (e) {
+      toast(e.message, 'danger');
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  if (!open || !cliente) return null;
+  return h(Modal, { open, onClose, title: `Diseñar formulario — ${cliente.nombre}`, lg: true },
+    h('div', { className: 'mb' },
+      loading ? h('div', { className: 'empty' }, h('p', null, 'Cargando…')) : h(React.Fragment, null,
+        h('div', { className: 'al al-info mb3' }, 'El tarifario (tipos de servicio y rutas) lo define Comercial — aquí solo se agregan campos adicionales que necesite el formulario de servicios de este cliente.'),
+        h('div', { className: 'mb3' },
+          h('div', { className: 'if-label mb2' }, 'Tarifario del cliente (solo lectura)'),
+          tarifario.length === 0
+            ? h('div', { className: 'txs tmut' }, 'Este cliente aún no tiene tarifario — pídele a Comercial que lo cargue.')
+            : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } },
+                tarifario.map(t => h('span', { key: t.id, className: 'badge bamb' },
+                  `${PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio} — ${t.origen || '—'} → ${t.destino || '—'}`)))
+        ),
+        h('div', { className: 'divider' }),
+        h('div', { className: 'if-label mb2' }, `Campos por defecto (siempre presentes)`),
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 12 } },
+          CAMPOS_SERVICIO_DEFECTO.map(c => h('span', { key: c, className: 'badge bgr' }, c))),
+        h('div', { className: 'if-label mb2' }, `Campos específicos de este cliente (${campos.length})`),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 } },
+          campos.length === 0
+            ? h('div', { className: 'txs tmut' }, 'Sin campos adicionales configurados')
+            : campos.map(c => h('div', { key: c.id, className: 'flex fic fjb', style: { padding: '7px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' } },
+                h('span', { className: 'tsr' }, c.nombre),
+                h('div', { className: 'flex fic gap2' },
+                  h('span', { className: 'badge bgr' }, c.tipo + (c.tipo === 'lista' && c.opciones ? ` (${c.opciones.length})` : '')),
+                  c.req && h('span', { className: 'badge br' }, 'Req.'),
+                  h('button', { className: 'bi', onClick: () => delCampo(c.id) }, '✕')
+                )
+              ))
+        ),
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-end', background: 'var(--surface2)', padding: 10, borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', flexWrap: 'wrap' } },
+          h('div', { style: { flex: 2, minWidth: 140 } }, h(FG, { label: 'Nombre del campo' }, h('input', { className: 'fi', value: nc.nombre, onChange: e => setNc(p => Object.assign({}, p, { nombre: e.target.value })), placeholder: 'Ej: Centro de costos' }))),
+          h('div', { style: { flex: 1, minWidth: 110 } }, h(FG, { label: 'Tipo' }, h('select', { className: 'fsel', value: nc.tipo, onChange: e => setNc(p => Object.assign({}, p, { tipo: e.target.value })) }, ['texto', 'lista', 'hora', 'numero', 'fecha', 'paradas'].map(t => h('option', { key: t }, t))))),
+          nc.tipo === 'lista' && h('div', { style: { flex: 2, minWidth: 180 } }, h(FG, { label: 'Componentes de la lista' }, h('input', { className: 'fi', value: nc.opcionesTxt, onChange: e => setNc(p => Object.assign({}, p, { opcionesTxt: e.target.value })), placeholder: 'Opción 1, Opción 2, Opción 3...' }))),
+          h('label', { className: 'flex fic gap2 tsr', style: { marginBottom: 13, whiteSpace: 'nowrap' } }, h('input', { type: 'checkbox', checked: nc.req, onChange: e => setNc(p => Object.assign({}, p, { req: e.target.checked })) }), 'Requerido'),
+          h('button', { className: 'btn bp btn-sm', onClick: addCampo }, '+ Agregar')
+        )
+      )
+    ),
+    h('div', { className: 'mf' },
+      h('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
+      h('button', { className: 'btn bp', disabled: loading || guardando, onClick: guardar }, guardando ? 'Guardando…' : '✓ Guardar formulario')
+    )
+  );
+}
+
+function ClientesComercialOperaciones({ toast }) {
+  const [clientes, setClientes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sel, setSel] = useState(null);
+
+  function refresh() {
+    return Promise.all([extApiGet('/api/extractos/clientes'), extApiGet('/api/extractos/contratos')])
+      .then(([cs, ks]) => {
+        const contratoAprobadoPorCliente = {};
+        ks.forEach(k => { if (k.estado === 'APROBADO') contratoAprobadoPorCliente[k.cliente_id] = k; });
+        setClientes(cs.filter(c => c.es_corporativo && contratoAprobadoPorCliente[c.id]));
+      })
+      .catch(e => toast(e.message, 'danger'));
+  }
+  useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  return h('div', null,
+    h('div', { className: 'al al-info mb3' }, 'Clientes corporativos dados de alta en Comercial y ya aprobados por Trámites — diseña aquí los campos adicionales de su formulario de servicios.'),
+    loading ? h('div', { className: 'empty' }, h('p', null, 'Cargando…')) :
+    h('div', { className: 'card' }, h('div', { className: 'tw' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'Cliente'), h('th', null, 'Tarifario'), h('th', null, 'Formulario de servicios'), h('th', null))),
+      h('tbody', null,
+        clientes.length === 0 ? h('tr', null, h('td', { colSpan: 4 }, h('div', { className: 'empty' },
+          h('p', null, 'Sin clientes de Comercial aprobados todavía')))) :
+        clientes.map(c => h('tr', { key: c.id },
+          h('td', null, c.nombre),
+          h('td', null, h('span', { className: 'badge bamb' }, 'Ver tarifario en Comercial')),
+          h('td', null, h('span', { className: `badge ${c.formulario_disenado ? 'bg' : 'by'}` }, c.formulario_disenado ? 'Diseñado' : 'Pendiente de diseño')),
+          h('td', null, h('button', { className: 'btn btn-sm bs', onClick: () => setSel(c) }, '🛠 Diseñar formulario'))
+        ))
+      )
+    ))),
+    h(DisenarFormularioModal, { cliente: sel, open: !!sel, onClose: () => setSel(null), toast, onGuardado: refresh })
+  );
+}
+
 function OperacionesApp({ onBack }) {
   const [mod, setMod] = useState('operaciones');
   const [theme, setTheme] = useState((document.documentElement.getAttribute('data-theme')) || 'light');
@@ -22420,6 +22678,7 @@ function OperacionesApp({ onBack }) {
     operaciones: { t: 'Tablero de Operaciones', s: 'Despacho en tiempo real' },
     servicios: { t: 'Servicios', s: 'Programación diaria de viajes' },
     contratos: { t: 'Contratos y Clientes', s: 'Convenios operativos y campos de servicio' },
+    clientesComercial: { t: 'Clientes Comercial', s: 'Diseño del formulario de servicios por cliente' },
     produccion: { t: 'Producción y Rentabilidad', s: 'Indicadores operativos' },
     liquidacion: { t: 'Liquidación de Servicios', s: 'Relación de servicios ejecutados y envío al cliente' }
   };
@@ -22427,6 +22686,7 @@ function OperacionesApp({ onBack }) {
     { id: 'operaciones', label: 'Tablero', ico: '🗂️' },
     { id: 'servicios', label: 'Servicios', ico: '📋' },
     { id: 'contratos', label: 'Contratos', ico: '📁' },
+    { id: 'clientesComercial', label: 'Clientes Comercial', ico: '🤝' },
     { id: 'produccion', label: 'Producción', ico: '📊' },
     { id: 'liquidacion', label: 'Liquidación', ico: '🧾' }
   ];
@@ -22437,6 +22697,7 @@ function OperacionesApp({ onBack }) {
     switch (mod) {
       case 'contratos': return h(Contratos, { toast: toast });
       case 'servicios': return h(Servicios, { toast: toast });
+      case 'clientesComercial': return h(ClientesComercialOperaciones, { toast: toast });
       case 'produccion': return h(Produccion, null);
       case 'liquidacion': return h(LiquidacionServicios, { toast: toast });
       case 'operaciones':
@@ -22485,7 +22746,7 @@ const CLASES_VEHICULO_COM = ['Automóvil', 'Campero', 'Van', 'Microbús', 'Bus']
 
 function TarifarioTabla({ items, setItems }) {
   function addRow() {
-    setItems(p => [...p, { tipoServicio: Object.keys(PRODUCTOS_SERVICIO)[0], tipoVehiculo: CLASES_VEHICULO_COM[0], origen: '', destino: '', valorServicio: '', pagoAfiliado: '' }]);
+    setItems(p => [...p, { tipoServicio: Object.keys(PRODUCTOS_SERVICIO)[0], tipoVehiculo: CLASES_VEHICULO_COM[0], descripcion: '', origen: '', destino: '', valorServicio: '', pagoAfiliado: '' }]);
   }
   function updateRow(i, patch) {
     setItems(p => p.map((r, j) => j === i ? { ...r, ...patch } : r));
@@ -22496,15 +22757,16 @@ function TarifarioTabla({ items, setItems }) {
   return rc('div', { className: 'tw' },
     rc('table', null,
       rc('thead', null, rc('tr', null,
-        rc('th', null, 'Tipo de servicio'), rc('th', null, 'Tipo de vehículo'), rc('th', null, 'Origen'),
+        rc('th', null, 'Tipo de servicio'), rc('th', null, 'Tipo de vehículo'), rc('th', null, 'Descripción'), rc('th', null, 'Origen'),
         rc('th', null, 'Destino'), rc('th', null, 'Valor al cliente'), rc('th', null, 'Pago afiliado/convenio'), rc('th', null))),
       rc('tbody', null,
-        items.length === 0 ? rc('tr', null, rc('td', { colSpan: 7 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin filas — agrega al menos una tarifa')))) :
+        items.length === 0 ? rc('tr', null, rc('td', { colSpan: 8 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin filas — agrega al menos una tarifa')))) :
         items.map((r, i) => rc('tr', { key: i },
           rc('td', null, rc('select', { className: 'fsel', value: r.tipoServicio, onChange: e => updateRow(i, { tipoServicio: e.target.value }) },
             Object.entries(PRODUCTOS_SERVICIO).map(([k, v]) => rc('option', { key: k, value: k }, v.label)))),
           rc('td', null, rc('select', { className: 'fsel', value: r.tipoVehiculo, onChange: e => updateRow(i, { tipoVehiculo: e.target.value }) },
             CLASES_VEHICULO_COM.map(c => rc('option', { key: c, value: c }, c)))),
+          rc('td', null, rc('input', { className: 'fi', style: { minWidth: 140 }, value: r.descripcion || '', placeholder: 'Opcional', onChange: e => updateRow(i, { descripcion: e.target.value }) })),
           rc('td', null, rc('input', { className: 'fi', style: { minWidth: 100 }, value: r.origen, placeholder: 'Opcional', onChange: e => updateRow(i, { origen: e.target.value }) })),
           rc('td', null, rc('input', { className: 'fi', style: { minWidth: 100 }, value: r.destino, placeholder: 'Opcional', onChange: e => updateRow(i, { destino: e.target.value }) })),
           rc('td', null, rc('input', { className: 'fi', style: { minWidth: 110 }, type: 'number', value: r.valorServicio, onChange: e => updateRow(i, { valorServicio: e.target.value }) })),
@@ -22524,35 +22786,19 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
   const [telefono, setTelefono] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [objeto, setObjeto] = React.useState('');
-  const [origen, setOrigen] = React.useState('');
-  const [destino, setDestino] = React.useState('');
   const [fechaInicio, setFechaInicio] = React.useState('');
   const [fechaFin, setFechaFin] = React.useState('');
   const [archivoFirmado, setArchivoFirmado] = React.useState(null);
   const [tarifario, setTarifario] = React.useState([]);
-  const [rutaSel, setRutaSel] = React.useState('__nueva__');
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
 
-  const rutasTarifario = tarifario.filter(r => r.origen && r.origen.trim() && r.destino && r.destino.trim());
-
-  React.useEffect(() => {
-    if (rutaSel !== '__nueva__' && !rutasTarifario[Number(rutaSel)]) setRutaSel('__nueva__');
-  }, [tarifario]);
-
   function reset() {
     setNombre(''); setDocumento(''); setDireccion(''); setTelefono(''); setEmail('');
-    setObjeto(''); setOrigen(''); setDestino(''); setFechaInicio(''); setFechaFin('');
-    setArchivoFirmado(null); setTarifario([]); setRutaSel('__nueva__'); setError('');
+    setObjeto(''); setFechaInicio(''); setFechaFin('');
+    setArchivoFirmado(null); setTarifario([]); setError('');
   }
   function close() { reset(); onClose(); }
-
-  function elegirRuta(v) {
-    setRutaSel(v);
-    if (v === '__nueva__') { setOrigen(''); setDestino(''); return; }
-    const r = rutasTarifario[Number(v)];
-    if (r) { setOrigen(r.origen); setDestino(r.destino); }
-  }
 
   function leerArchivo(file) {
     if (!file) { setArchivoFirmado(null); return; }
@@ -22575,7 +22821,7 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
         nombre, documento, direccion, telefono, email, es_corporativo: true,
       });
       const contrato = await extApiSend('POST', '/api/extractos/contratos', {
-        clienteId: cliente.id, modalidad: 'EMPRESARIAL', objeto, origen, destino,
+        clienteId: cliente.id, modalidad: 'EMPRESARIAL', objeto,
         fechaInicio, fechaFin, archivoFirmadoUrl: archivoFirmado.url,
       });
       await extApiSend('PUT', `/api/extractos/clientes/${cliente.id}/tarifario`, { items: tarifario });
@@ -22626,20 +22872,7 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
         rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario aplicable al cliente'),
       ),
       rc(TarifarioTabla, { items: tarifario, setItems: setTarifario }),
-      rc('div', { className: 'divider' }),
-      rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Ruta del contrato'),
-      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen y destino'),
-        rc('select', { className: 'fsel', value: rutaSel, onChange: e => elegirRuta(e.target.value) },
-          rc('option', { value: '__nueva__' }, '+ Nueva ruta (definir manualmente)'),
-          rutasTarifario.map((r, i) => rc('option', { key: i, value: String(i) },
-            `${r.origen} → ${r.destino} (${PRODUCTOS_SERVICIO[r.tipoServicio]?.label || r.tipoServicio})`)))),
-      rutaSel === '__nueva__' && rc('div', { className: 'fg2' },
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
-          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
-          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
-      ),
-      rutasTarifario.length === 0 && rc('div', { className: 'txs tmut' }, 'Agrega filas al tarifario con origen y destino para poder elegirlas como ruta del contrato — mientras tanto, define la ruta manualmente.'),
+      rc('div', { className: 'txs tmut mt2' }, 'El contrato no limita las rutas: puedes agregar todos los tipos de servicio y rutas que necesites. Serán las opciones disponibles para Operaciones al crear servicios y para Trámites al generar extractos de este cliente.'),
     ),
     rc('div', { className: 'mf' },
       rc('button', { className: 'btn bs', onClick: close }, 'Cancelar'),
@@ -22652,15 +22885,41 @@ function ClienteComercialDetalleModal({ cliente, open, onClose, toast }) {
   const [contratos, setContratos] = React.useState([]);
   const [tarifario, setTarifario] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+  const [editando, setEditando] = React.useState(false);
+  const [tarifarioEdit, setTarifarioEdit] = React.useState([]);
+  const [guardando, setGuardando] = React.useState(false);
 
-  React.useEffect(() => {
-    if (!open || !cliente) return;
+  function cargar() {
+    if (!cliente) return Promise.resolve();
     setLoading(true);
-    Promise.all([
+    return Promise.all([
       extApiGet(`/api/extractos/contratos?clienteId=${cliente.id}`),
       extApiGet(`/api/extractos/clientes/${cliente.id}/tarifario`),
     ]).then(([k, t]) => { setContratos(k); setTarifario(t); }).catch(e => toast(e.message, 'danger')).finally(() => setLoading(false));
-  }, [open, cliente]);
+  }
+  React.useEffect(() => { if (open) cargar(); else setEditando(false); }, [open, cliente]);
+
+  function iniciarEdicion() {
+    setTarifarioEdit(tarifario.map(t => ({
+      tipoServicio: t.tipo_servicio, tipoVehiculo: t.tipo_vehiculo, descripcion: t.descripcion || '',
+      origen: t.origen || '', destino: t.destino || '', valorServicio: t.valor_servicio, pagoAfiliado: t.pago_afiliado,
+    })));
+    setEditando(true);
+  }
+  async function guardarTarifario() {
+    if (tarifarioEdit.some(r => !r.valorServicio)) { toast('Todas las filas deben tener un valor para el cliente', 'danger'); return; }
+    setGuardando(true);
+    try {
+      await extApiSend('PUT', `/api/extractos/clientes/${cliente.id}/tarifario`, { items: tarifarioEdit });
+      toast('Tarifario actualizado', 'success');
+      setEditando(false);
+      await cargar();
+    } catch (e) {
+      toast(e.message, 'danger');
+    } finally {
+      setGuardando(false);
+    }
+  }
 
   if (!open || !cliente) return null;
   const contrato = contratos[0];
@@ -22680,29 +22939,38 @@ function ClienteComercialDetalleModal({ cliente, open, onClose, toast }) {
             rc('div', { className: 'ct', style: { fontSize: 12 } }, `Contrato ${contrato.numero}`),
             rc('span', { className: `badge ${est.badge}` }, est.label)),
           contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
-          rc('div', { className: 'g2c' },
-            rc(IField, { label: 'Vigencia', value: `${fmtD(contrato.fecha_inicio)} — ${fmtD(contrato.fecha_fin)}` }),
-            rc(IField, { label: 'Origen — Destino', value: `${contrato.origen || '—'} — ${contrato.destino || '—'}` }),
-          ),
+          rc(IField, { label: 'Vigencia', value: `${fmtD(contrato.fecha_inicio)} — ${fmtD(contrato.fecha_fin)}` }),
           contrato.archivo_firmado_url && rc('div', { className: 'doc-thumb', style: { marginTop: 8 }, onClick: () => window.open(contrato.archivo_firmado_url, '_blank') },
             rc('div', { className: 'ic' }, '📎'), rc('div', null, rc('div', { className: 'fbold tsr' }, 'Contrato firmado'), rc('div', { className: 'txs tmut' }, 'Clic para ver')))
         ),
         rc('div', { className: 'mt3' },
-          rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Tarifario'),
-          rc('div', { className: 'tw' }, rc('table', null,
-            rc('thead', null, rc('tr', null, rc('th', null, 'Servicio'), rc('th', null, 'Vehículo'), rc('th', null, 'Origen'), rc('th', null, 'Destino'), rc('th', null, 'Valor cliente'), rc('th', null, 'Pago afiliado'))),
-            rc('tbody', null,
-              tarifario.length === 0 ? rc('tr', null, rc('td', { colSpan: 6 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin tarifas registradas')))) :
-              tarifario.map(t => rc('tr', { key: t.id },
-                rc('td', null, PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio),
-                rc('td', null, t.tipo_vehiculo),
-                rc('td', null, t.origen || '—'),
-                rc('td', null, t.destino || '—'),
-                rc('td', { className: 'tr fbold' }, fmt(t.valor_servicio)),
-                rc('td', { className: 'tr' }, fmt(t.pago_afiliado))
+          rc('div', { className: 'flex fjb', style: { alignItems: 'center', marginBottom: 8 } },
+            rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario'),
+            !editando && rc('button', { className: 'btn bs btn-sm', onClick: iniciarEdicion }, '✎ Editar tarifario')
+          ),
+          editando
+            ? rc(React.Fragment, null,
+                rc(TarifarioTabla, { items: tarifarioEdit, setItems: setTarifarioEdit }),
+                rc('div', { className: 'flex gap2 mt3' },
+                  rc('button', { className: 'btn bs', onClick: () => setEditando(false) }, 'Cancelar'),
+                  rc('button', { className: 'btn bp', disabled: guardando, onClick: guardarTarifario }, guardando ? 'Guardando…' : '✓ Guardar cambios')
+                )
+              )
+            : rc('div', { className: 'tw' }, rc('table', null,
+                rc('thead', null, rc('tr', null, rc('th', null, 'Servicio'), rc('th', null, 'Vehículo'), rc('th', null, 'Descripción'), rc('th', null, 'Origen'), rc('th', null, 'Destino'), rc('th', null, 'Valor cliente'), rc('th', null, 'Pago afiliado'))),
+                rc('tbody', null,
+                  tarifario.length === 0 ? rc('tr', null, rc('td', { colSpan: 7 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin tarifas registradas')))) :
+                  tarifario.map(t => rc('tr', { key: t.id },
+                    rc('td', null, PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio),
+                    rc('td', null, t.tipo_vehiculo),
+                    rc('td', null, t.descripcion || '—'),
+                    rc('td', null, t.origen || '—'),
+                    rc('td', null, t.destino || '—'),
+                    rc('td', { className: 'tr fbold' }, fmt(t.valor_servicio)),
+                    rc('td', { className: 'tr' }, fmt(t.pago_afiliado))
+                  ))
+                )
               ))
-            )
-          ))
         )
       )
     ),

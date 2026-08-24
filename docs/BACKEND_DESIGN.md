@@ -120,9 +120,9 @@ Implementa el "Formato Único de Extracto del Contrato" exigido por la **Resoluc
 ### 8.1 Modelo de datos
 
 - `extracto_config` (fila única) — código de la Dirección Territorial, número y año de la resolución de habilitación de la empresa, y tolerancia en días para el certificado de manejo defensivo. **Ajustar con los datos reales de habilitación de Transportes Multimodal Group** (`PUT /api/extracto-config`, solo `admin`) — los valores actuales (`305`/`0010`/`13`) son un ejemplo tomado de la Dirección Territorial Antioquia-Chocó, no la habilitación real de la empresa.
-- `extracto_clientes` — clientes del módulo (independiente de `convenios`), con banderas `es_icbf`/`es_corporativo` que restringen quién puede operar con ellos.
-- `extracto_contratos` — contrato con cada cliente; flujo `PENDIENTE_FIRMA → PENDIENTE_VALIDACION → APROBADO | DEVUELTO | RECHAZADO`; `numero` es el consecutivo de contrato de la empresa (los 4 dígitos correspondientes en el FUEC).
-- `extractos` — instancias del FUEC generadas; **inmutables** una vez creadas (el único cambio de estado permitido es anular). Incluyen `numero_fuec` (21 dígitos), `qr_token` único para la verificación pública, y `declaracion_aceptada_en`.
+- `extracto_clientes` — clientes del módulo (independiente de `convenios`), con banderas `es_icbf`/`es_corporativo` que restringen quién puede operar con ellos, y `formulario_disenado` (ver §9).
+- `extracto_contratos` — contrato con cada cliente; flujo `PENDIENTE_FIRMA → PENDIENTE_VALIDACION → APROBADO | DEVUELTO | RECHAZADO`; `numero` es el consecutivo de contrato de la empresa (los 4 dígitos correspondientes en el FUEC). Las columnas `origen`/`destino` quedan para contratos antiguos o para el texto legal de modalidades con ruta fija (Grupo Específico, Turística) — **ya no limitan qué rutas se pueden usar en un extracto**: eso lo decide el tarifario del cliente (`tarifario_items`, §9), que no tiene límite de filas.
+- `extractos` — instancias del FUEC generadas; **inmutables** una vez creadas (el único cambio de estado permitido es anular). Incluyen `numero_fuec` (21 dígitos), `tarifario_item_id` (la fila del tarifario del cliente usada, con su origen/destino copiados a las columnas `origen`/`destino` del extracto), `qr_token` único para la verificación pública, y `declaracion_aceptada_en`.
 - `extracto_conductores`, `extracto_historial` — relación con conductores (hasta 3) y bitácora de cada extracto.
 
 ### 8.2 Número del FUEC (Art. 4, Resolución 6652/2019)
@@ -135,7 +135,7 @@ Antes de generar cualquier extracto se valida, en orden, y devolviendo **siempre
 
 1. Contrato existe, está `APROBADO`, y la vigencia solicitada cae dentro de la vigencia del contrato → si no, `"Contrato vencido"`.
 2. Si el contrato requiere convenio de colaboración y no está registrado → `"Convenio inexistente"`.
-3. Origen/destino solicitados coinciden con los del contrato → si no, `"Ruta no autorizada"`.
+3. Se indicó un `tarifarioItemId` y ese `tarifario_items.id` pertenece al cliente del contrato → si no, `"Ruta no autorizada"`. **La ruta ya no la valida el contrato** (no hay un origen/destino único por contrato) — la valida el tarifario del cliente (§9), que puede tener cualquier cantidad de rutas y tipos de servicio. El origen/destino del extracto se copian de la fila del tarifario elegida, no se reciben como texto libre.
 4. Si lo genera un **afiliado**: el cliente no puede ser ICBF/corporativo (`"Cliente no autorizado"`), y el vehículo no puede tener cartera vencida (`"Mora del afiliado"`).
 5. Documentos del vehículo vigentes hasta la fecha fin del extracto: SOAT, RTM, Tarjeta de Operación.
 6. Documentos de cada conductor vigentes hasta la fecha fin: licencia, examen médico, seguridad social. El certificado de manejo defensivo tiene la tolerancia configurable en `extracto_config` (10 días por defecto) antes de bloquear.
@@ -149,8 +149,8 @@ Cubre así el control de vigencias (la vigencia del extracto nunca puede superar
 | `GET/PUT /api/extracto-config` | Numeración FUEC. Escritura solo `admin`. |
 | `GET/POST/PUT /api/extractos/clientes[/:id]` | |
 | `GET/POST/PUT /api/extractos/contratos[/:id]` | `PUT` con `estado` mueve el flujo de aprobación; ICBF restringido a `admin`/`tramites`. |
-| `GET/POST /api/extractos`, `GET /api/extractos/:id` | `POST` exige `aceptaDeclaracion: true` (declaración de responsabilidad) y corre el motor de validación; responde `422` con el mensaje específico si falla. |
-| `POST /api/extractos/:id/duplicar` | Copia cliente/vehículo/conductor/rutas, genera nuevo consecutivo y vigencia (requiere fechas nuevas + aceptar declaración de nuevo). |
+| `GET/POST /api/extractos`, `GET /api/extractos/:id` | `POST` exige `aceptaDeclaracion: true` (declaración de responsabilidad) y `tarifarioItemId` (fila del tarifario del cliente — ver §9), y corre el motor de validación; responde `422` con el mensaje específico si falla. |
+| `POST /api/extractos/:id/duplicar` | Copia cliente/vehículo/conductor/`tarifarioItemId`, genera nuevo consecutivo y vigencia (requiere fechas nuevas + aceptar declaración de nuevo). |
 | `PUT /api/extractos/:id/anular` | No se modifican los datos originales — solo cambia el estado y queda en el historial. |
 | `GET /api/extractos/dashboard` | Indicadores: generados, vigentes, próximos a vencer, vencidos, por modalidad, vehículos sin extracto vigente. |
 | `GET /api/public/extractos/:qrToken` | **Sin autenticación** — consulta pública del QR (número, estado, vehículo, conductor, cliente, vigencia). |
@@ -169,40 +169,57 @@ Cubre así el control de vigencias (la vigencia del extracto nunca puede superar
 - Número de Tarjeta de Operación del vehículo: la columna existe (`vehiculos.numero_tarjeta_operacion`) y la API ya la acepta, pero no hay campo en el formulario de Vehículos para editarla — hoy solo se puede fijar llamando a la API directamente.
 - Carga real de archivos para el contrato firmado (hoy queda como `data:` URL en la base de datos vía `FileReader`, funcional pero no ideal a gran escala — ver §7).
 
-## 9. Módulo Comercial — completo end-to-end
+## 9. Módulo Comercial — completo end-to-end, tarifario único para Comercial/Operaciones/Extractos
 
 Reemplaza el slot "Comercial" (antes deshabilitado en `HomeERP`) por el módulo donde se dan de alta los clientes corporativos: cada cliente se crea con su contrato firmado y su tarifario, y queda pendiente de verificación en Trámites antes de poder generar extractos a su nombre. No duplica infraestructura: reutiliza `extracto_clientes`/`extracto_contratos` (§8), la misma bandera `es_corporativo` y el mismo flujo de aprobación de contrato que ya usa Extractos.
 
-### 9.1 Modelo de datos nuevo
+**Principio central**: el tarifario del cliente (`tarifario_items`) es la única fuente de rutas y tipos de servicio — Comercial lo administra (qué se cobra al cliente y qué se paga a afiliado/convenio por cada servicio), y tanto Operaciones (para crear servicios) como Trámites (para generar extractos) lo consultan tal cual, sin copiarlo. El contrato **no** limita cuántas rutas puede tener un cliente — puede tener cualquier cantidad de filas en su tarifario.
 
-- `tarifario_items` — filas del tarifario de un cliente (`cliente_id → extracto_clientes`): tipo de servicio, tipo de vehículo, origen/destino opcionales, valor del servicio en pesos, pago a afiliados/convenios por ese servicio, y `orden` para mantener el orden de la tabla editable. Se reemplaza por completo en cada guardado (`DELETE` + `INSERT` en una transacción), no hay historial de versiones del tarifario.
+### 9.1 Modelo de datos
+
+- `tarifario_items` — filas del tarifario de un cliente (`cliente_id → extracto_clientes`): tipo de servicio, tipo de vehículo, **descripción** (texto libre del servicio), origen/destino opcionales, valor del servicio en pesos, pago a afiliados/convenios por ese servicio, y `orden`. Se reemplaza por completo en cada guardado (`PUT /api/extractos/clientes/:id/tarifario` — `DELETE` + `INSERT` en una transacción), no hay historial de versiones del tarifario. Editable desde Comercial (alta y detalle de cliente) y desde el detalle de contrato en Trámites — ambos reutilizan `TarifarioTabla`.
+- `extracto_clientes.formulario_disenado` — bandera que indica si Operaciones ya diseñó los campos adicionales del formulario de servicios de este cliente (ver 9.4).
 - `extracto_contrato_historial` — bitácora por contrato (`contrato_id → extracto_contratos`): quién hizo qué y cuándo (creación, carga de firma, cambios de estado con motivo). Se muestra en el detalle del contrato tanto en Comercial como en Trámites.
+- `contratos.extracto_cliente_id` — vincula un contrato de Operaciones (tabla `contratos`, la que usan `GET/POST/PUT /api/contratos` y `/api/servicios`, construida en una fase anterior pero nunca conectada al frontend hasta ahora) con el cliente de Comercial del que se generó automáticamente. El id de este contrato vinculado es siempre `com-<clienteId>`.
+- `contrato_campos.id` ahora se expone en `GET /api/contratos` (antes se omitía) — lo necesita el frontend para poder editar/eliminar cada campo individualmente.
+- `servicios.campos` (JSON) y `servicios.liquidacion` (JSON) — nuevas columnas para que un servicio real (tabla `servicios`) pueda guardar las respuestas a los campos personalizados del cliente y los datos de liquidación, igual que ya podía el servicio "mock" de Operaciones (`docs/BACKEND_DESIGN.md` §5).
 
-### 9.2 Flujo cliente → contrato → verificación
+### 9.2 Flujo cliente → contrato → verificación → habilitación de Operaciones
 
-1. Comercial (o Trámites/admin) crea el cliente (`POST /api/extractos/clientes`, ahora con rol `comercial` habilitado) marcado `es_corporativo: true` — le aplica la misma restricción que a los demás clientes corporativos (bloqueado para que un afiliado genere extractos a su nombre, §8.3 punto 4).
-2. En el mismo flujo se guarda el tarifario (`PUT /api/extractos/clientes/:id/tarifario`, modo tabla — reemplaza todas las filas) y se crea el contrato adjuntando de una vez el archivo firmado.
-3. Si el contrato se crea **con** `archivoFirmadoUrl` ya adjunto (el caso normal desde Comercial: el cliente ya llega con el contrato firmado), `POST /api/extractos/contratos` salta directo a `PENDIENTE_VALIDACION` en vez de `PENDIENTE_FIRMA` — esa es la "solicitud de verificación" que le llega a Trámites. El historial registra `"Contrato creado con firma adjunta — solicitud de verificación enviada a Trámites"`.
-4. Trámites revisa el contrato (mismo flujo/pestaña "Contratos" de Extractos, §8.5) y lo mueve a `APROBADO`, `DEVUELTO` (con motivo) o `RECHAZADO` vía `PUT /api/extractos/contratos/:id`. Solo con `estado = APROBADO` el motor de validación (§8.3, paso 1) permite generar extractos a nombre de ese cliente.
+1. Comercial (o Trámites/admin) crea el cliente (`POST /api/extractos/clientes`, rol `comercial` habilitado) marcado `es_corporativo: true`, con su tarifario (cualquier cantidad de filas) y el contrato con el archivo firmado adjunto.
+2. `POST /api/extractos/contratos` con `archivoFirmadoUrl` salta directo a `PENDIENTE_VALIDACION` en vez de `PENDIENTE_FIRMA` — esa es la "solicitud de verificación" que le llega a Trámites.
+3. Trámites revisa el contrato (y puede editar el tarifario ahí mismo) y lo mueve a `APROBADO`, `DEVUELTO` o `RECHAZADO` vía `PUT /api/extractos/contratos/:id`.
+4. **Al aprobar**, el backend crea (o reactiva) automáticamente un contrato vinculado en la tabla `contratos` de Operaciones (id `com-<clienteId>`, `extracto_cliente_id` apuntando al cliente) — esto es lo que "habilita a Operaciones" a generar servicios para ese cliente: aparece en su selector de Contrato y en la sección "Clientes Comercial".
+5. Con `estado = APROBADO` el motor de validación (§8.3) también permite generar extractos a nombre del cliente, seleccionando cualquier fila de su tarifario.
 
-### 9.3 Endpoints nuevos
+### 9.3 Endpoints nuevos/cambiados
 
 | Método y ruta | Notas |
 |---|---|
 | `GET /api/extractos/clientes/:id/tarifario` | Lista el tarifario del cliente, ordenado. |
-| `PUT /api/extractos/clientes/:id/tarifario` | Reemplaza el tarifario completo (`items: [...]`). Roles `admin`/`tramites`/`comercial`. |
+| `PUT /api/extractos/clientes/:id/tarifario` | Reemplaza el tarifario completo (`items: [...]`, incluye `descripcion`). Roles `admin`/`tramites`/`comercial`. |
+| `PUT /api/contratos/:id/campos` | Reemplaza los campos personalizados del formulario de servicios de ese contrato (`campos: [...]`). Si el contrato está vinculado a un cliente de Comercial, marca `formulario_disenado=1` en ese cliente. Roles `admin`/`operaciones`. |
+| `POST /api/extractos` | Ahora requiere `tarifarioItemId` (antes `origen`/`destino` de texto libre) — ver §8.3 y §8.4. |
 
-Además, `POST/PUT /api/extractos/clientes` y `POST /api/extractos/contratos` ahora aceptan el rol `comercial` (antes solo `admin`/`tramites`); `PUT /api/extractos/contratos/:id` también.
+Además, `POST/PUT /api/extractos/clientes` y `POST /api/extractos/contratos` aceptan el rol `comercial` (antes solo `admin`/`tramites`); `PUT /api/extractos/contratos/:id` también.
+
+**Bug preexistente corregido de paso**: `server.js` tenía dos funciones `contratoConDetalle` con el mismo nombre en el mismo scope (una para `contratos`/Operaciones, otra para `extracto_contratos`/Extractos) — en JavaScript la segunda pisaba silenciosamente a la primera, así que `/api/contratos` llevaba tiempo devolviendo la forma equivocada (sin `productos`/`conductorIds`/`campos`). Nunca se notó porque el frontend de Operaciones no consultaba esa API. Se renombró la de Operaciones a `opContratoConDetalle`.
 
 ### 9.4 Frontend
 
-- `ComercialApp` (nuevo, en `public/index.html`) — listado de clientes con badge de estado del contrato (pendiente de firma / pendiente de validación / aprobado / devuelto / rechazado), alta de cliente con formulario + tarifario en modo tabla (`TarifarioTabla`, filas editables con los mismos catálogos de tipo de servicio/vehículo que usa Operaciones) y carga del contrato firmado.
-- **Ruta del contrato sourced del tarifario**: el campo "Origen y destino" del contrato (`NuevoClienteComercialModal`) ya no es texto libre — es un selector que se llena con las combinaciones origen→destino que tengan las filas del tarifario que se está armando en el mismo formulario, más una opción "+ Nueva ruta" para definirla manualmente cuando ninguna fila del tarifario aplica. Como el motor de validación (§8.3, paso 3) exige que el origen/destino del extracto coincida con el del contrato, esto asegura que los extractos solo puedan generarse para rutas efectivamente tarifadas al cliente (o para la ruta manual que se haya definido).
-- El detalle de contrato en Trámites (Extractos → Contratos) ahora muestra el historial (`extracto_contrato_historial`) con usuario, fecha, acción y nota de cada cambio de estado.
+- `ComercialApp` — listado de clientes con badge de estado del contrato, alta de cliente con formulario + tarifario en modo tabla (`TarifarioTabla`, con columna Descripción) y carga del contrato firmado. **Ya no pide origen/destino del contrato** — el tarifario es la única fuente de rutas. El detalle de cada cliente (`ClienteComercialDetalleModal`) permite editar el tarifario en cualquier momento ("✎ Editar tarifario").
+- El detalle de contrato en Trámites (`ContratoDetalleModal`, Extractos → Contratos) también muestra y permite editar el tarifario del cliente, además del historial — útil tanto para revisar lo que cargó Comercial como para clientes que no vienen de Comercial (Grupo Específico/Turística/ICBF creados directamente desde Trámites, que también necesitan tarifario para poder generar extractos).
+- `GenerarExtractoForm` (Trámites → Extractos → Extractos): el campo de ruta ya no es texto libre — es un selector "Servicio y ruta" que carga el tarifario del cliente del contrato elegido y envía `tarifarioItemId`.
+- **Operaciones → "Clientes Comercial"** (nuevo ítem de menú): lista los clientes de Comercial con contrato `APROBADO`, con badge "Diseñado"/"Pendiente de diseño" según `formulario_disenado`. `DisenarFormularioModal` deja agregar campos personalizados (mismo editor que ya tenía `ContratoFormModal` para sus campos: nombre, tipo, requerido, opciones) sobre el contrato vinculado (`com-<clienteId>`), guardando con `PUT /api/contratos/:id/campos`. El tarifario se muestra ahí solo de lectura ("lo administra Comercial").
+- **Operaciones → Servicios** (`ServicioFormModal`): el selector de "Contrato" ahora incluye, además de los contratos locales/mock (`Universidad de Antioquia`, `EPM`, etc. — datos de ejemplo, sin persistencia real), los contratos reales vinculados a clientes de Comercial (marcados "(Comercial)"). Al elegir uno de estos:
+  - El selector "Servicio y ruta" se llena con el tarifario real del cliente (`tarifario_items`, vía `GET /api/extractos/clientes/:id/tarifario`) en vez del tarifario local del contrato mock (`contrato.productos`).
+  - **No hay "+ Generar nueva ruta"** — el tarifario de un cliente de Comercial solo lo edita Comercial (o Trámites), consistente con "Comercial es quien indica a Operaciones cuánto pagan y cuánto cobran por cada servicio". Se muestra un aviso pidiendo que Comercial agregue la ruta si falta.
+  - Los campos personalizados vienen del contrato vinculado (`contrato_campos`, diseñados en "Clientes Comercial").
+  - El servicio se guarda con `POST`/`PUT /api/servicios` (persistencia real), no en el store local del navegador — a diferencia de los contratos mock, que siguen usando `getServiciosStore()` sin persistir.
 - Rol `comercial`: ya estaba anticipado en el esquema (comentarios desde las primeras migraciones) pero no tenía módulo asociado; este es el primero que lo usa.
 
 ### 9.5 Pendiente
 
 - El tarifario no valida contra duplicados (misma combinación tipo de servicio + tipo de vehículo + origen/destino dos veces) — se guarda tal cual se ingresa.
-- Un contrato solo tiene una ruta (origen/destino) autorizada para extractos, aunque su tarifario tenga varias — si el cliente necesita extractos por más de una ruta tarifada, hoy tocaría registrar un contrato adicional por ruta. Ampliar `validarGeneracionExtracto` para aceptar cualquier ruta tarifada del cliente (no solo la guardada en el contrato) queda pendiente.
-- El tarifario de Comercial (`tarifario_items`, con backend real) y el tarifario propio del módulo Operaciones (`contrato.productos`, todavía en memoria del navegador — ver README "Módulo Operaciones") son dos modelos independientes; no están unificados. Operaciones ya replica el mismo patrón (ruta + tarifa a cobrar + pago a afiliado, con opción de generar una ruta nueva) pero sobre su propio almacenamiento local, pendiente de conectar a la API real (`docs/BACKEND_DESIGN.md` §5).
+- Los contratos/servicios "mock" de Operaciones (`Universidad de Antioquia`, `EPM`, `ICBF Regional Antioquia`, `Aeropuerto José María Córdova` — datos de ejemplo del prototipo original) siguen sin persistencia real; solo los clientes que llegan por el flujo Comercial → Trámites usan la API real de `contratos`/`servicios`. Migrar esos contratos de ejemplo a la API real (o reemplazarlos por clientes reales) queda pendiente — ver también §5.
+- La liquidación de servicios reales (`servicios.liquidacion`) ya tiene columna y endpoint, pero no se probó con datos reales de facturación — sigue siendo la misma UI de siempre (`LiquidarServicioModal`), solo que ahora persiste para los clientes de Comercial.
