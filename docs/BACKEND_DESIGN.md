@@ -197,10 +197,12 @@ Además, `POST/PUT /api/extractos/clientes` y `POST /api/extractos/contratos` ah
 ### 9.4 Frontend
 
 - `ComercialApp` (nuevo, en `public/index.html`) — listado de clientes con badge de estado del contrato (pendiente de firma / pendiente de validación / aprobado / devuelto / rechazado), alta de cliente con formulario + tarifario en modo tabla (`TarifarioTabla`, filas editables con los mismos catálogos de tipo de servicio/vehículo que usa Operaciones) y carga del contrato firmado.
+- **Ruta del contrato sourced del tarifario**: el campo "Origen y destino" del contrato (`NuevoClienteComercialModal`) ya no es texto libre — es un selector que se llena con las combinaciones origen→destino que tengan las filas del tarifario que se está armando en el mismo formulario, más una opción "+ Nueva ruta" para definirla manualmente cuando ninguna fila del tarifario aplica. Como el motor de validación (§8.3, paso 3) exige que el origen/destino del extracto coincida con el del contrato, esto asegura que los extractos solo puedan generarse para rutas efectivamente tarifadas al cliente (o para la ruta manual que se haya definido).
 - El detalle de contrato en Trámites (Extractos → Contratos) ahora muestra el historial (`extracto_contrato_historial`) con usuario, fecha, acción y nota de cada cambio de estado.
 - Rol `comercial`: ya estaba anticipado en el esquema (comentarios desde las primeras migraciones) pero no tenía módulo asociado; este es el primero que lo usa.
 
 ### 9.5 Pendiente
 
 - El tarifario no valida contra duplicados (misma combinación tipo de servicio + tipo de vehículo + origen/destino dos veces) — se guarda tal cual se ingresa.
-- No hay todavía un uso automático del tarifario al generar servicios/extractos (por ahora es solo referencia informativa del contrato comercial, no alimenta el cálculo de valores en Operaciones/Extractos).
+- Un contrato solo tiene una ruta (origen/destino) autorizada para extractos, aunque su tarifario tenga varias — si el cliente necesita extractos por más de una ruta tarifada, hoy tocaría registrar un contrato adicional por ruta. Ampliar `validarGeneracionExtracto` para aceptar cualquier ruta tarifada del cliente (no solo la guardada en el contrato) queda pendiente.
+- El tarifario de Comercial (`tarifario_items`, con backend real) y el tarifario propio del módulo Operaciones (`contrato.productos`, todavía en memoria del navegador — ver README "Módulo Operaciones") son dos modelos independientes; no están unificados. Operaciones ya replica el mismo patrón (ruta + tarifa a cobrar + pago a afiliado, con opción de generar una ruta nueva) pero sobre su propio almacenamiento local, pendiente de conectar a la API real (`docs/BACKEND_DESIGN.md` §5).

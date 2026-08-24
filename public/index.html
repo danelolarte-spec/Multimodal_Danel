@@ -20372,7 +20372,6 @@ const getTarifaProducto = (contrato, producto) => {
   const entry = contrato && contrato.productos ? contrato.productos.find(x => x.producto === producto) : null;
   return entry ? entry.tarifa : productoTarifa(producto);
 };
-const productosDeContrato = contrato => (contrato && contrato.productos && contrato.productos.length) ? contrato.productos.map(x => x.producto) : Object.keys(PRODUCTOS_SERVICIO);
 
 function FG({ label, children }) {
   return h('div', { className: 'fg' }, h('label', { className: 'fl' }, label), children);
@@ -20453,7 +20452,7 @@ function ContratoFormModal({ contrato, onSave, onClose }) {
   const [f, setF] = useState(contrato ? Object.assign({}, contrato, { productos: contrato.productos || [], conductorIds: contrato.conductorIds || [] }) : { nombre: '', nit: '', tipo: 'Corporativo', estado: 'Activo', valor: 0, campos: [], productos: [], conductorIds: [], logisticoNombre: '', fechaVencimiento: '', contratoPdfNombre: '', contratoPdfData: '' });
   const [nc, setNc] = useState({ nombre: '', tipo: 'texto', req: false, opcionesTxt: '' });
   const primerProducto = Object.keys(PRODUCTOS_SERVICIO)[0];
-  const [np, setNp] = useState({ producto: primerProducto, tarifa: PRODUCTOS_SERVICIO[primerProducto].tarifaBase, origen: '', destino: '', cantidadDisponibilidades: 1, editando: null });
+  const [np, setNp] = useState({ producto: primerProducto, tarifa: PRODUCTOS_SERVICIO[primerProducto].tarifaBase, tarifaAfiliado: 0, origen: '', destino: '', cantidadDisponibilidades: 1, editando: null });
   const [nuevoProdOpen, setNuevoProdOpen] = useState(false);
   const [npNuevo, setNpNuevo] = useState({ key: '', label: '', tarifaBase: 0 });
   const set = k => e => setF(p => Object.assign({}, p, { [k]: e.target.value }));
@@ -20473,13 +20472,13 @@ function ContratoFormModal({ contrato, onSave, onClose }) {
   const guardarProducto = () => {
     const yaExiste = f.productos.some(x => x.producto === np.producto);
     if (yaExiste && np.editando !== np.producto) { alert('Ese producto ya está en el tarifario — edítalo desde la lista'); return; }
-    const entry = { producto: np.producto, tarifa: Number(np.tarifa) || 0 };
+    const entry = { producto: np.producto, tarifa: Number(np.tarifa) || 0, tarifaAfiliado: Number(np.tarifaAfiliado) || 0 };
     if (np.producto === 'disponibilidad') entry.cantidadDisponibilidades = Number(np.cantidadDisponibilidades) || 1;
     else { entry.origen = np.origen.trim(); entry.destino = np.destino.trim(); }
     setF(p => Object.assign({}, p, { productos: [...p.productos.filter(x => x.producto !== np.producto), entry] }));
-    setNp({ producto: primerProducto, tarifa: PRODUCTOS_SERVICIO[primerProducto].tarifaBase, origen: '', destino: '', cantidadDisponibilidades: 1, editando: null });
+    setNp({ producto: primerProducto, tarifa: PRODUCTOS_SERVICIO[primerProducto].tarifaBase, tarifaAfiliado: 0, origen: '', destino: '', cantidadDisponibilidades: 1, editando: null });
   };
-  const editarProducto = x => setNp({ producto: x.producto, tarifa: x.tarifa, origen: x.origen || '', destino: x.destino || '', cantidadDisponibilidades: x.cantidadDisponibilidades || 1, editando: x.producto });
+  const editarProducto = x => setNp({ producto: x.producto, tarifa: x.tarifa, tarifaAfiliado: x.tarifaAfiliado || 0, origen: x.origen || '', destino: x.destino || '', cantidadDisponibilidades: x.cantidadDisponibilidades || 1, editando: x.producto });
   const delProducto = prod => setF(p => Object.assign({}, p, { productos: p.productos.filter(x => x.producto !== prod) }));
   const toggleConductor = cid => setF(p => Object.assign({}, p, { conductorIds: p.conductorIds.includes(cid) ? p.conductorIds.filter(x => x !== cid) : [...p.conductorIds, cid] }));
 
@@ -20550,7 +20549,8 @@ function ContratoFormModal({ contrato, onSave, onClose }) {
                   : (x.origen || x.destino) && h('div', { className: 'txs tmut' }, `${x.origen || '—'} → ${x.destino || '—'}`)
               ),
               h('div', { className: 'flex fic gap2' },
-                h('span', { className: 'badge bamb' }, fmt(x.tarifa)),
+                h('span', { className: 'badge bamb' }, 'Cobrar: ' + fmt(x.tarifa)),
+                x.tarifaAfiliado ? h('span', { className: 'badge bgr' }, 'Pagar: ' + fmt(x.tarifaAfiliado)) : null,
                 h('button', { className: 'bi', onClick: () => editarProducto(x) }, '✎'),
                 h('button', { className: 'bi', onClick: () => delProducto(x.producto) }, '✕')
               )
@@ -20559,7 +20559,8 @@ function ContratoFormModal({ contrato, onSave, onClose }) {
       h('div', { style: { background: 'var(--surface2)', padding: 10, borderRadius: 'var(--r-sm)', border: '1px solid var(--border)' } },
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' } },
           h('div', { style: { flex: 1, minWidth: 160 } }, h(FG, { label: 'Producto' }, h('select', { className: 'fsel', value: np.producto, onChange: e => setNp(p => Object.assign({}, p, { producto: e.target.value, tarifa: PRODUCTOS_SERVICIO[e.target.value].tarifaBase, editando: null })) }, Object.keys(PRODUCTOS_SERVICIO).map(p => h('option', { key: p, value: p }, PRODUCTOS_SERVICIO[p].label))))),
-          h('div', { style: { flex: 1, minWidth: 120 } }, h(FG, { label: 'Tarifa (COP)' }, h('input', { type: 'number', className: 'fi', value: np.tarifa, onChange: e => setNp(p => Object.assign({}, p, { tarifa: e.target.value })) }))),
+          h('div', { style: { flex: 1, minWidth: 120 } }, h(FG, { label: 'Tarifa a cobrar (COP)' }, h('input', { type: 'number', className: 'fi', value: np.tarifa, onChange: e => setNp(p => Object.assign({}, p, { tarifa: e.target.value })) }))),
+          h('div', { style: { flex: 1, minWidth: 140 } }, h(FG, { label: 'Pago a afiliado/convenio (COP)' }, h('input', { type: 'number', className: 'fi', value: np.tarifaAfiliado, onChange: e => setNp(p => Object.assign({}, p, { tarifaAfiliado: e.target.value })) }))),
           h('button', { className: 'btn bs btn-sm', onClick: () => setNuevoProdOpen(o => !o) }, '+ Producto nuevo')
         ),
         np.producto === 'disponibilidad'
@@ -20699,18 +20700,49 @@ function Contratos({ toast }) {
 }
 
 // ─────────────────────── SERVICIOS ───────────────────────
-function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave, onClose }) {
+function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave, onGuardarTarifa, onClose }) {
   const [f, setF] = useState(servicio ? Object.assign({ campos: {}, producto: '' }, servicio) : { contratoId: '', producto: '', fecha: new Date().toISOString().slice(0, 10), hora: '', origen: '', destino: '', origenGeo: null, destinoGeo: null, vehiculoId: '', conductorId: '', pax: 1, valor: 0, estado: 'Pendiente', obs: '', campos: {} });
+  const [rutaSel, setRutaSel] = React.useState(servicio && servicio.producto ? servicio.producto : '');
+  const [nuevaRuta, setNuevaRuta] = React.useState(false);
+  const [tarifaAfiliado, setTarifaAfiliado] = React.useState(0);
+  const [guardarEnContrato, setGuardarEnContrato] = React.useState(true);
   const set = k => e => setF(p => Object.assign({}, p, { [k]: e.target.value }));
   const setCampo = (campoId, val) => setF(p => Object.assign({}, p, { campos: Object.assign({}, p.campos, { [campoId]: val }) }));
   const k = contratos.find(x => x.id === f.contratoId);
-  const setProducto = e => {
+  const tarifario = (k && k.productos) || [];
+
+  const setRuta = e => {
+    const val = e.target.value;
+    setRutaSel(val);
+    if (val === '__nueva__') {
+      setNuevaRuta(true);
+      setTarifaAfiliado(0);
+      setF(p => Object.assign({}, p, { producto: '' }));
+      return;
+    }
+    setNuevaRuta(false);
+    const entry = tarifario.find(x => x.producto === val);
+    setTarifaAfiliado(entry && entry.tarifaAfiliado ? entry.tarifaAfiliado : 0);
+    setF(p => Object.assign({}, p, {
+      producto: val,
+      valor: getTarifaProducto(k, val),
+      origen: entry && entry.origen ? entry.origen : p.origen,
+      destino: entry && entry.destino ? entry.destino : p.destino,
+    }));
+  };
+  const setProductoNuevo = e => {
     const nuevo = e.target.value;
-    setF(p => Object.assign({}, p, { producto: nuevo, valor: getTarifaProducto(k, nuevo) }));
+    setF(p => Object.assign({}, p, { producto: nuevo, valor: productoTarifa(nuevo) }));
   };
 
   const save = () => {
     if (!f.fecha || !f.hora || !f.origen || !f.destino || !f.contratoId) { alert('Fecha, hora, origen, destino y contrato son obligatorios'); return; }
+    if (nuevaRuta && guardarEnContrato && f.producto && k) {
+      const entry = { producto: f.producto, tarifa: Number(f.valor) || 0, tarifaAfiliado: Number(tarifaAfiliado) || 0 };
+      if (f.producto === 'disponibilidad') entry.cantidadDisponibilidades = 1;
+      else { entry.origen = f.origen.trim(); entry.destino = f.destino.trim(); }
+      onGuardarTarifa && onGuardarTarifa(k.id, entry);
+    }
     onSave(Object.assign({}, f, { pax: Number(f.pax) || 1, valor: Number(f.valor) || 0, vehiculoId: f.vehiculoId || null, conductorId: f.conductorId || null }));
   };
 
@@ -20719,7 +20751,22 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
       h('div', { className: 'g2c' },
         h('div', null,
           h(FG, { label: 'Contrato' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre)))),
-          h(FG, { label: 'Producto' + (k && k.productos && k.productos.length ? ' (tarifario de ' + k.nombre + ')' : '') }, h('select', { className: 'fsel', value: f.producto || '', onChange: setProducto }, h('option', { value: '' }, 'Seleccionar producto...'), productosDeContrato(k).map(p => h('option', { key: p, value: p }, `${productoLbl(p)} (tarifa: ${fmt(getTarifaProducto(k, p))})`)))),
+          h(FG, { label: 'Servicio y ruta' + (k ? ' — tarifario de ' + k.nombre : '') },
+            h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
+              h('option', { value: '' }, 'Seleccionar...'),
+              tarifario.map(x => h('option', { key: x.producto, value: x.producto },
+                `${productoLbl(x.producto)} — ${x.producto === 'disponibilidad' ? `${x.cantidadDisponibilidades || 1} disp.` : `${x.origen || '—'} → ${x.destino || '—'}`} (cobrar ${fmt(x.tarifa)}${x.tarifaAfiliado ? ' · pagar ' + fmt(x.tarifaAfiliado) : ''})`)),
+              h('option', { value: '__nueva__' }, '+ Generar nueva ruta / servicio no tarifado'))),
+          nuevaRuta && h('div', { style: { background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, marginBottom: 10 } },
+            h('div', { className: 'al al-info mb2' }, 'Este servicio no está tarifado para este cliente. Define el tipo de servicio y, si aplica, la tarifa a cobrar y a pagar.'),
+            h('div', { className: 'fg2' },
+              h(FG, { label: 'Tipo de servicio' }, h('select', { className: 'fsel', value: f.producto || '', onChange: setProductoNuevo }, h('option', { value: '' }, 'Seleccionar...'), Object.keys(PRODUCTOS_SERVICIO).map(p => h('option', { key: p, value: p }, PRODUCTOS_SERVICIO[p].label)))),
+              h(FG, { label: 'Pago a afiliado/convenio (COP)' }, h('input', { type: 'number', className: 'fi', value: tarifaAfiliado, onChange: e => setTarifaAfiliado(e.target.value) }))
+            ),
+            k && h('label', { className: 'flex fic gap2 tsr', style: { cursor: 'pointer' } },
+              h('input', { type: 'checkbox', checked: guardarEnContrato, onChange: e => setGuardarEnContrato(e.target.checked) }),
+              `Guardar esta ruta y tarifa en el contrato de ${k.nombre} para futuros servicios`)
+          ),
           h('div', { className: 'fg2' },
             h(FG, { label: 'Fecha' }, h('input', { type: 'date', className: 'fi', value: f.fecha, onChange: set('fecha') })),
             h(FG, { label: 'Hora' }, h('input', { type: 'time', className: 'fi', value: f.hora, onChange: set('hora') }))
@@ -20881,6 +20928,11 @@ function Servicios({ toast }) {
   const vehiculos = habilitadosParaOperar();
   const conductores = conductoresHabilitados();
   const refresh = () => setList(getServiciosStore().slice());
+  const handleGuardarTarifa = (contratoId, entry) => {
+    const kk = contratos.find(x => x.id === contratoId);
+    if (!kk) return;
+    updateContrato(contratoId, { productos: [...(kk.productos || []).filter(x => x.producto !== entry.producto), entry] });
+  };
 
   const filtered = !buscado ? [] : list.filter(s => {
     const k = contratos.find(x => x.id === s.contratoId);
@@ -21009,7 +21061,7 @@ function Servicios({ toast }) {
             h('div', { className: 'cf' }, h('span', { className: 'txs tmut' }, `${filtered.length} de ${list.length} servicios`))
           )
     ),
-    modalOpen && h(ServicioFormModal, { servicio: editing, contratos: contratos, vehiculos: vehiculos, conductores: conductores, onSave: handleSave, onClose: () => { setModalOpen(false); setEditing(null); } }),
+    modalOpen && h(ServicioFormModal, { servicio: editing, contratos: contratos, vehiculos: vehiculos, conductores: conductores, onSave: handleSave, onGuardarTarifa: handleGuardarTarifa, onClose: () => { setModalOpen(false); setEditing(null); } }),
     importOpen && h(ImportarServiciosModal, { contratos: contratos, toast: toast, onImport: refresh, onClose: () => setImportOpen(false) }),
     viewing && h(VerServicioModal, {
       servicio: viewing,
@@ -22478,15 +22530,29 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
   const [fechaFin, setFechaFin] = React.useState('');
   const [archivoFirmado, setArchivoFirmado] = React.useState(null);
   const [tarifario, setTarifario] = React.useState([]);
+  const [rutaSel, setRutaSel] = React.useState('__nueva__');
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+
+  const rutasTarifario = tarifario.filter(r => r.origen && r.origen.trim() && r.destino && r.destino.trim());
+
+  React.useEffect(() => {
+    if (rutaSel !== '__nueva__' && !rutasTarifario[Number(rutaSel)]) setRutaSel('__nueva__');
+  }, [tarifario]);
 
   function reset() {
     setNombre(''); setDocumento(''); setDireccion(''); setTelefono(''); setEmail('');
     setObjeto(''); setOrigen(''); setDestino(''); setFechaInicio(''); setFechaFin('');
-    setArchivoFirmado(null); setTarifario([]); setError('');
+    setArchivoFirmado(null); setTarifario([]); setRutaSel('__nueva__'); setError('');
   }
   function close() { reset(); onClose(); }
+
+  function elegirRuta(v) {
+    setRutaSel(v);
+    if (v === '__nueva__') { setOrigen(''); setDestino(''); return; }
+    const r = rutasTarifario[Number(v)];
+    if (r) { setOrigen(r.origen); setDestino(r.destino); }
+  }
 
   function leerArchivo(file) {
     if (!file) { setArchivoFirmado(null); return; }
@@ -22546,12 +22612,6 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
       rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Objeto del contrato'),
         rc('input', { className: 'fi', value: objeto, onChange: e => setObjeto(e.target.value) })),
       rc('div', { className: 'fg2' },
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
-          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
-          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
-      ),
-      rc('div', { className: 'fg2' },
         rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha inicio *'),
           rc('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
         rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Fecha fin * (máx. 1 año)'),
@@ -22566,6 +22626,20 @@ function NuevoClienteComercialModal({ open, onClose, toast, onCreado }) {
         rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario aplicable al cliente'),
       ),
       rc(TarifarioTabla, { items: tarifario, setItems: setTarifario }),
+      rc('div', { className: 'divider' }),
+      rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Ruta del contrato'),
+      rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen y destino'),
+        rc('select', { className: 'fsel', value: rutaSel, onChange: e => elegirRuta(e.target.value) },
+          rc('option', { value: '__nueva__' }, '+ Nueva ruta (definir manualmente)'),
+          rutasTarifario.map((r, i) => rc('option', { key: i, value: String(i) },
+            `${r.origen} → ${r.destino} (${PRODUCTOS_SERVICIO[r.tipoServicio]?.label || r.tipoServicio})`)))),
+      rutaSel === '__nueva__' && rc('div', { className: 'fg2' },
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Origen'),
+          rc('input', { className: 'fi', value: origen, onChange: e => setOrigen(e.target.value) })),
+        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Destino'),
+          rc('input', { className: 'fi', value: destino, onChange: e => setDestino(e.target.value) })),
+      ),
+      rutasTarifario.length === 0 && rc('div', { className: 'txs tmut' }, 'Agrega filas al tarifario con origen y destino para poder elegirlas como ruta del contrato — mientras tanto, define la ruta manualmente.'),
     ),
     rc('div', { className: 'mf' },
       rc('button', { className: 'btn bs', onClick: close }, 'Cancelar'),
