@@ -1,0 +1,16 @@
+{
+  "name": "multimodal-pig-tramites",
+  "version": "1.0.0",
+  "description": "PIG — Plataforma Integral de Gestión de Transportes Multimodal Group S.A.S. (Trámites y Operaciones)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
