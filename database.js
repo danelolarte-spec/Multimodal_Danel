@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   rol TEXT NOT NULL DEFAULT 'tramites', -- admin | tramites | operaciones | comercial
   activo INTEGER NOT NULL DEFAULT 1,
+  firma_url TEXT, -- firma electrónica del usuario (imagen data: URL, dibujada en un canvas)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -288,7 +289,8 @@ CREATE TABLE IF NOT EXISTS servicios (
   estado TEXT NOT NULL DEFAULT 'Pendiente', -- Pendiente | Asignado | En Curso | Finalizado | Cancelado | Liquidado
   valor INTEGER, pax INTEGER, obs TEXT,
   campos TEXT, -- JSON: respuestas a los campos personalizados del cliente (contrato_campos)
-  liquidacion TEXT -- JSON: {tarifaConfirmada, novedades, valorAPagar, pagarA, terceroNombre, fecha}
+  liquidacion TEXT, -- JSON: {tarifaConfirmada, novedades, valorAPagar, pagarA, terceroNombre, fecha}
+  extracto_id TEXT REFERENCES extractos(id) -- extracto generado para este servicio puntual, si aplica
 );
 
 -- ───────────────────────── EXTRACTOS (FUEC — Resolución 6652 de 2019, Mintransporte) ─────────────────────────
@@ -335,7 +337,8 @@ CREATE INDEX IF NOT EXISTS idx_extracto_contratos_cliente ON extracto_contratos(
 CREATE TABLE IF NOT EXISTS extracto_contrato_historial (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   contrato_id TEXT NOT NULL REFERENCES extracto_contratos(id) ON DELETE CASCADE,
-  fecha TEXT NOT NULL DEFAULT (datetime('now')), usuario TEXT, accion TEXT, nota TEXT
+  fecha TEXT NOT NULL DEFAULT (datetime('now')), usuario TEXT, accion TEXT, nota TEXT,
+  firma_url TEXT -- firma electrónica del usuario en el momento de la acción (si tenía una guardada)
 );
 
 -- Extractos generados (instancias del FUEC). Inmutables una vez creados (solo cambia estado por vencimiento/anulación).
@@ -404,6 +407,9 @@ ensureColumn('extracto_clientes', 'formulario_disenado', 'INTEGER NOT NULL DEFAU
 ensureColumn('contratos', 'extracto_cliente_id', 'TEXT REFERENCES extracto_clientes(id)');
 ensureColumn('servicios', 'campos', 'TEXT');
 ensureColumn('servicios', 'liquidacion', 'TEXT');
+ensureColumn('servicios', 'extracto_id', 'TEXT REFERENCES extractos(id)');
+ensureColumn('users', 'firma_url', 'TEXT');
+ensureColumn('extracto_contrato_historial', 'firma_url', 'TEXT');
 ensureColumn('extractos', 'tarifario_item_id', 'INTEGER REFERENCES tarifario_items(id)');
 
 function seedIfEmpty() {

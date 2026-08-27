@@ -103,7 +103,7 @@ app.post('/api/auth/login', (req, res) => {
   }
   req.session.userId = user.id;
   req.session.rol = user.rol;
-  res.json({ id: user.id, nombre: user.nombre, email: user.email, rol: user.rol });
+  res.json({ id: user.id, nombre: user.nombre, email: user.email, rol: user.rol, firma_url: user.firma_url });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -111,8 +111,14 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  const user = db.prepare('SELECT id, nombre, email, rol FROM users WHERE id = ?').get(req.session.userId);
+  const user = db.prepare('SELECT id, nombre, email, rol, firma_url FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'No autenticado' });
+  res.json(user);
+});
+
+app.put('/api/auth/firma', requireAuth, (req, res) => {
+  db.prepare('UPDATE users SET firma_url = ? WHERE id = ?').run(req.body.firmaUrl || null, req.session.userId);
+  const user = db.prepare('SELECT id, nombre, email, rol, firma_url FROM users WHERE id = ?').get(req.session.userId);
   res.json(user);
 });
 
@@ -700,6 +706,36 @@ app.put('/api/servicios/:id', requireRole('admin', 'operaciones'), (req, res) =>
   res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));
 });
 
+// Genera el extracto de un servicio puntual ya ejecutado/asignado, sin pedir datos adicionales —
+// todo (vehículo, conductor, ruta, fecha) sale del propio servicio. Pensado para que lo dispare
+// quien esté a cargo del servicio (ej. el conductor) con un solo clic. Solo aplica a servicios de
+// clientes reales de Comercial (con contrato aprobado y tarifario) — ver docs/BACKEND_DESIGN.md §9/§10.
+app.post('/api/servicios/:id/generar-extracto', requireAuth, (req, res) => {
+  const s = db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Servicio no encontrado' });
+  if (s.extracto_id) return res.status(422).json({ error: 'Este servicio ya tiene un extracto generado' });
+  if (!s.vehiculo_id || !s.conductor_id) return res.status(422).json({ error: 'El servicio no tiene vehículo y conductor asignados' });
+  const opContrato = s.contrato_id && db.prepare('SELECT * FROM contratos WHERE id=?').get(s.contrato_id);
+  if (!opContrato || !opContrato.extracto_cliente_id) {
+    return res.status(422).json({ error: 'Este servicio no está vinculado a un cliente de Comercial' });
+  }
+  const contrato = db.prepare("SELECT * FROM extracto_contratos WHERE cliente_id=? AND estado='APROBADO' ORDER BY created_at DESC").get(opContrato.extracto_cliente_id);
+  if (!contrato) return res.status(422).json({ error: 'Cliente no autorizado' });
+  const tarifarioItem = db.prepare(
+    'SELECT * FROM tarifario_items WHERE cliente_id=? AND tipo_servicio=? AND IFNULL(origen,\'\')=IFNULL(?,\'\') AND IFNULL(destino,\'\')=IFNULL(?,\'\')'
+  ).get(opContrato.extracto_cliente_id, s.producto, s.origen, s.destino);
+  if (!tarifarioItem) return res.status(422).json({ error: 'Ruta no autorizada' });
+  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const result = crearExtracto({
+    contratoId: contrato.id, vehiculoId: s.vehiculo_id, conductorIds: [s.conductor_id],
+    tarifarioItemId: tarifarioItem.id, fechaInicio: s.fecha, fechaFin: s.fecha,
+    generadoPorTipo: 'AFILIADO', usuario, viaServicio: true,
+  });
+  if (result.error) return res.status(422).json({ error: result.error });
+  db.prepare('UPDATE servicios SET extracto_id=? WHERE id=?').run(result.id, s.id);
+  res.status(201).json(extractoConDetalle(db.prepare('SELECT * FROM extractos WHERE id=?').get(result.id)));
+});
+
 // ───────────────────────── Extractos (FUEC) — Resolución 6652/2019 Mintransporte ─────────────────────────
 // Ver docs/BACKEND_DESIGN.md §8 para el detalle normativo completo.
 
@@ -724,7 +760,7 @@ function docVigenteEn(doc, fecha) {
 
 // Devuelve null si puede generarse, o el mensaje de bloqueo específico (nunca genérico,
 // tal como exige el documento de proceso) si no.
-function validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo }) {
+function validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo, viaServicio }) {
   if (!contrato) return 'Contrato vencido';
   if (contrato.estado !== 'APROBADO') return 'Cliente no autorizado';
   if (fechaInicio < contrato.fecha_inicio || fechaFin > contrato.fecha_fin) return 'Contrato vencido';
@@ -734,7 +770,12 @@ function validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo,
   if (!tarifarioItem) return 'Ruta no autorizada';
 
   if (generadoPorTipo === 'AFILIADO') {
-    if (cliente.es_icbf || cliente.es_corporativo) return 'Cliente no autorizado';
+    // Un afiliado generando manualmente no puede tocar clientes ICBF/corporativos — pero generar
+    // el extracto de un servicio puntual ya asignado y tarifado por la empresa (viaServicio) es
+    // completar el papeleo de una operación que la empresa ya autorizó, no lo mismo.
+    if (!viaServicio && (cliente.es_icbf || cliente.es_corporativo)) return 'Cliente no autorizado';
+    // La mora sí bloquea siempre que el canal sea el afiliado, sin importar el tipo de cliente:
+    // si no ha pagado administración, no puede generar extractos aunque todo lo demás esté aprobado.
     const cartera = db.prepare('SELECT saldo FROM cartera WHERE vehiculo_id = ?').get(vehiculo.id);
     if (cartera && cartera.saldo > 0) return 'Mora del afiliado';
   }
@@ -870,7 +911,8 @@ app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operac
   if (!contrato) return res.status(404).json({ error: 'No encontrado' });
   const cols = ['objeto', 'origen', 'destino', 'fecha_inicio', 'fecha_fin', 'convenio_colaboracion', 'archivo_firmado_url'];
   const present = cols.filter((c) => c in req.body);
-  const usuario = db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre;
+  const actor = db.prepare('SELECT nombre, firma_url FROM users WHERE id=?').get(req.session.userId);
+  const usuario = actor?.nombre;
   const body = { ...req.body, id: req.params.id };
   const tx = db.transaction(() => {
     if (present.length) db.prepare(`UPDATE extracto_contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
@@ -883,8 +925,8 @@ app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operac
       const validadoPor = ['APROBADO', 'DEVUELTO', 'RECHAZADO'].includes(req.body.estado) ? usuario : contrato.validado_por;
       db.prepare('UPDATE extracto_contratos SET estado=?, motivo_devolucion=?, validado_por=? WHERE id=?')
         .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
-      db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion, nota) VALUES (?,?,?,?)")
-        .run(req.params.id, usuario, `Cambió estado a: ${CONTRATO_ESTADO_LABEL[req.body.estado] || req.body.estado}`, req.body.motivoDevolucion || '');
+      db.prepare("INSERT INTO extracto_contrato_historial (contrato_id, usuario, accion, nota, firma_url) VALUES (?,?,?,?,?)")
+        .run(req.params.id, usuario, `Cambió estado a: ${CONTRATO_ESTADO_LABEL[req.body.estado] || req.body.estado}`, req.body.motivoDevolucion || '', actor?.firma_url || null);
       // Al aprobar, habilita al cliente para Operaciones: crea (o reactiva) su contrato vinculado
       // en /api/contratos, para que consuma el mismo tarifario del cliente y pueda diseñar/usar
       // el formulario de servicios (contrato_campos) — ver docs/BACKEND_DESIGN.md §9.
@@ -967,7 +1009,7 @@ app.get('/api/extractos/:id', requireAuth, (req, res) => {
   res.json(extractoConDetalle(e));
 });
 
-function crearExtracto({ contratoId, vehiculoId, conductorIds, tarifarioItemId, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId }) {
+function crearExtracto({ contratoId, vehiculoId, conductorIds, tarifarioItemId, fechaInicio, fechaFin, generadoPorTipo, usuario, duplicadoDeId, viaServicio }) {
   const contrato = db.prepare('SELECT * FROM extracto_contratos WHERE id=?').get(contratoId);
   const cliente = contrato && db.prepare('SELECT * FROM extracto_clientes WHERE id=?').get(contrato.cliente_id);
   const tarifarioItem = contrato && tarifarioItemId
@@ -978,7 +1020,7 @@ function crearExtracto({ contratoId, vehiculoId, conductorIds, tarifarioItemId, 
   const conductores = (conductorIds || []).map((id) => conductorConDetalle(db.prepare('SELECT * FROM conductores WHERE id=?').get(id))).filter(Boolean);
   if (!conductores.length) return { error: 'Debe indicar al menos un conductor' };
 
-  const errorValidacion = validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo });
+  const errorValidacion = validarGeneracionExtracto({ contrato, cliente, tarifarioItem, vehiculo, conductores, fechaInicio, fechaFin, generadoPorTipo, viaServicio });
   if (errorValidacion) return { error: errorValidacion };
 
   const id = newId('ext');

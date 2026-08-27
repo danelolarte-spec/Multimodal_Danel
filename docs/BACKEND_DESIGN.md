@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -223,3 +223,52 @@ Además, `POST/PUT /api/extractos/clientes` y `POST /api/extractos/contratos` ac
 - El tarifario no valida contra duplicados (misma combinación tipo de servicio + tipo de vehículo + origen/destino dos veces) — se guarda tal cual se ingresa.
 - Los contratos/servicios "mock" de Operaciones (`Universidad de Antioquia`, `EPM`, `ICBF Regional Antioquia`, `Aeropuerto José María Córdova` — datos de ejemplo del prototipo original) siguen sin persistencia real; solo los clientes que llegan por el flujo Comercial → Trámites usan la API real de `contratos`/`servicios`. Migrar esos contratos de ejemplo a la API real (o reemplazarlos por clientes reales) queda pendiente — ver también §5.
 - La liquidación de servicios reales (`servicios.liquidacion`) ya tiene columna y endpoint, pero no se probó con datos reales de facturación — sigue siendo la misma UI de siempre (`LiquidarServicioModal`), solo que ahora persiste para los clientes de Comercial.
+
+## 10. Rutas por municipio, extracto por servicio, mora, buscador y firma electrónica
+
+### 10.1 Rutas de Colombia (departamento → municipio)
+
+`COLOMBIA_DEPARTAMENTOS` (en `public/index.html`, justo después del bloque `const { useState, ... } = React;`) es un dataset estático embebido con 33 "departamentos" (los 32 reales del DANE más `Bogotá D.C.` separado de Cundinamarca) y 1104 municipios, tomado de [marcovega/colombia-json](https://github.com/marcovega/colombia-json). `MunicipioField` es el selector encadenado departamento → municipio que lo consume; **solo el municipio se guarda/muestra** en las columnas `origen`/`destino` (texto libre en `extracto_contratos` y `tarifario_items`) — el departamento es solo un filtro de UI para no tener que buscar entre 1104 opciones de una vez.
+
+### 10.2 Portal del Afiliado → Extractos (única sección real del portal)
+
+`PortalAfiliadoExtractos` (pestaña "Extractos" del Portal del Afiliado) es la **primera y única parte de ese portal conectada a la API real** — el resto del portal sigue siendo una simulación con datos locales (`AFILIADO_DEMO`, `_cambiosStore`, etc., sin persistencia). Reutiliza la misma infraestructura de Comercial (§9): el afiliado carga un contrato de modalidad `GRUPO_ESPECIFICO` con una sola ruta (origen/destino como municipios, vía `MunicipioField`) que se guarda como la única fila del tarifario del cliente; el contrato entra directo en `PENDIENTE_VALIDACION` (mismo mecanismo que Comercial) para que Trámites lo apruebe antes de poder generar extractos. Con el contrato `APROBADO`, el afiliado elige uno de sus propios vehículos (y el conductor asignado a ese vehículo) y genera el extracto — `generadoPorTipo: 'AFILIADO'`, así que le aplican las mismas reglas de mora e ICBF/corporativo que a cualquier generación de afiliado (§10.3).
+
+No existe todavía un rol/login de "afiliado" distinto de los roles admin/tramites/operaciones/comercial — quien esté autenticado en la app ve y usa este flujo. Formalizar una sesión propia para afiliados queda fuera de este alcance.
+
+### 10.3 Mora vs. ICBF/corporativo — reglas independientes
+
+`validarGeneracionExtracto` separó dos restricciones que antes iban juntas bajo `generadoPorTipo === 'AFILIADO'`:
+
+- **Cliente no autorizado** (ICBF/corporativo): un afiliado generando *manualmente* no puede tocar estos clientes — se mantiene, es la restricción original que motivó el módulo Comercial.
+- **Mora del afiliado**: si el vehículo tiene saldo pendiente en `cartera`, bloquea **siempre** que el canal sea "afiliado", sin importar el tipo de cliente — ni siquiera un contrato aprobado lo salta.
+
+El parámetro `viaServicio` (ver 10.4) hace una excepción puntual solo a la primera regla: completar el papeleo de un servicio puntual que la empresa ya asignó y tarifó no es lo mismo que un afiliado generando libremente a nombre de un cliente corporativo. La mora nunca se salta, tenga o no `viaServicio`.
+
+### 10.4 Generar extracto de un servicio puntual (un clic)
+
+`POST /api/servicios/:id/generar-extracto` (`requireAuth`, sin rol específico — pensado para que lo dispare quien esté a cargo del servicio, p. ej. el conductor) no recibe datos: todo sale del propio servicio.
+
+1. El servicio debe estar vinculado a un contrato real de Comercial (`contratos.extracto_cliente_id`) con `extracto_contratos` en estado `APROBADO`.
+2. Debe tener `vehiculo_id` y `conductor_id` asignados.
+3. Busca en el tarifario del cliente una fila cuyo `tipo_servicio`/`origen`/`destino` coincidan exactamente con los del servicio (así se generó el servicio en primer lugar, §9.4) — si no hay match, `"Ruta no autorizada"`.
+4. Llama a `crearExtracto` con `fechaInicio = fechaFin = servicios.fecha`, `generadoPorTipo: 'AFILIADO'`, `viaServicio: true` — corre el mismo motor de validación de siempre (documentos, mora, etc.), sin atajos de compliance.
+5. Si se genera, guarda `servicios.extracto_id` — un servicio solo puede generar un extracto una vez (`"Este servicio ya tiene un extracto generado"` si se reintenta).
+
+En el frontend, la fila del servicio (`Servicios` → `AccionesMenu`) muestra "📄 Generar extracto" solo si el contrato es real y el servicio no tiene ya uno.
+
+**Bug corregido de paso**: al fusionar servicios reales (`GET /api/servicios`, columnas `snake_case`) con los servicios mock (`contratoId`/`vehiculoId`/`conductorId` en `camelCase`) en la lista de `Servicios`, faltaba mapear los nombres — los servicios reales mostraban "—" en Cliente/Vehículo/Conductor porque las búsquedas por `s.contratoId` etc. no encontraban nada. `refresh()` en `Servicios` ahora mapea `contrato_id → contratoId`, etc. al mezclar.
+
+### 10.5 Duplicar extracto
+
+Ya existía (`POST /api/extractos/:id/duplicar`) y ya cumplía la especificación: copia cliente/vehículo/conductor/ruta (`tarifario_item_id`) y datos contractuales, pide nueva vigencia (`fechaInicio`/`fechaFin`) y nueva declaración de responsabilidad, genera un nuevo consecutivo de FUEC y una nueva `created_at` — el extracto original no se toca. Solo se ajustó el texto del botón/alerta para que sea explícito sobre qué se copia y qué no.
+
+### 10.6 Buscador de extractos
+
+`ExtractosListado` (pestaña "Extractos" de Trámites → Extractos) filtra en el cliente (sin cambios de API) sobre el resultado ya cargado de `GET /api/extractos`: cliente, placa, número de FUEC, conductor (texto libre, busca por nombre), estado, modalidad, rango de fecha de creación (`created_at`) y rango de vigencia (`fecha_inicio`/`fecha_fin`).
+
+### 10.7 Firma electrónica
+
+- `users.firma_url` — imagen (PNG en `data:` URL) que cada usuario dibuja una vez en un `<canvas>` (`FirmaCanvas`/`MiFirmaModal`, botón "✍️" en la barra superior de Trámites) y se guarda con `PUT /api/auth/firma`. Se expone en `GET /api/auth/me` y en la respuesta de login.
+- `extracto_contrato_historial.firma_url` — cuando un usuario cambia el estado de un contrato (`PUT /api/extractos/contratos/:id` con `estado`), si tiene firma guardada, se copia (no se referencia) a esa fila del historial — es una foto del momento, no cambia si el usuario redibuja su firma después. Se muestra inline en el historial del `ContratoDetalleModal`.
+- Pendiente: solo se firma el cambio de estado del contrato (aprobar/devolver/rechazar). No se firman todavía la generación/anulación de extractos ni los documentos PDF generados (contrato imprimible, FUEC) — sería el siguiente paso natural si se necesita la firma impresa en esos documentos.

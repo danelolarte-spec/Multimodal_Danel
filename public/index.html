@@ -24,6 +24,34 @@
   useEffect
 } = React;
 
+// Datos de referencia: departamentos y municipios de Colombia (para rutas de contrato/extracto)
+const COLOMBIA_DEPARTAMENTOS = [{"departamento":"Amazonas","municipios":["Leticia","Puerto Nariño"]},{"departamento":"Antioquia","municipios":["Abejorral","Abriaquí","Alejandría","Amagá","Amalfi","Andes","Angelópolis","Angostura","Anorí","Anzá","Apartadó","Arboletes","Argelia","Armenia","Barbosa","Bello","Belmira","Betania","Betulia","Briceño","Buriticá","Caicedo","Caldas","Campamento","Caracolí","Caramanta","Carepa","Carolina del Príncipe","Caucasia","Cañasgordas","Chigorodó","Cisneros","Ciudad Bolívar","Cocorná","Concepción","Concordia","Copacabana","Cáceres","Dabeiba","Donmatías","Ebéjico","El Bagre","El Carmen de Viboral","El Peñol","El Retiro","El Santuario","Entrerríos","Envigado","Fredonia","Frontino","Giraldo","Girardota","Granada","Guadalupe","Guarne","Guatapé","Gómez Plata","Heliconia","Hispania","Itagüí","Ituango","Jardín","Jericó","La Ceja","La Estrella","La Pintada","La Unión","Liborina","Maceo","Marinilla","Medellín","Montebello","Murindó","Mutatá","Nariño","Nechí","Necoclí","Olaya","Peque","Pueblorrico","Puerto Berrío","Puerto Nare","Puerto Triunfo","Remedios","Rionegro","Sabanalarga","Sabaneta","Salgar","San Andrés de Cuerquia","San Carlos","San Francisco","San Jerónimo","San José de la Montaña","San Juan de Urabá","San Luis","San Pedro de Urabá","San Pedro de los Milagros","San Rafael","San Roque","San Vicente","Santa Bárbara","Santa Fe de Antioquia","Santa Rosa de Osos","Santo Domingo","Segovia","Sonsón","Sopetrán","Tarazá","Tarso","Titiribí","Toledo","Turbo","Támesis","Uramita","Urrao","Valdivia","Valparaíso","Vegachí","Venecia","Vigía del Fuerte","Yalí","Yarumal","Yolombó","Yondó","Zaragoza"]},{"departamento":"Arauca","municipios":["Arauca","Arauquita","Cravo Norte","Fortul","Puerto Rondón","Saravena","Tame"]},{"departamento":"Atlántico","municipios":["Baranoa","Barranquilla","Campo de la Cruz","Candelaria","Galapa","Juan de Acosta","Luruaco","Malambo","Manatí","Palmar de Varela","Piojó","Polonuevo","Ponedera","Puerto Colombia","Repelón","Sabanagrande","Sabanalarga","Santa Lucía","Santo Tomás","Soledad","Suán","Tubará","Usiacurí"]},{"departamento":"Bogotá D.C.","municipios":["Bogotá D.C."]},{"departamento":"Bolívar","municipios":["Achí","Altos del Rosario","Arenal","Arjona","Arroyohondo","Barranco de Loba","Brazuelo de Papayal","Calamar","Cantagallo","Cartagena de Indias","Cicuco","Clemencia","Córdoba","El Carmen de Bolívar","El Guamo","El Peñón","Hatillo de Loba","Magangué","Mahates","Margarita","María la Baja","Mompós","Montecristo","Morales","Norosí","Pinillos","Regidor","Río Viejo","San Cristóbal","San Estanislao","San Fernando","San Jacinto","San Jacinto del Cauca","San Juan Nepomuceno","San Martín de Loba","San Pablo","Santa Catalina","Santa Rosa","Santa Rosa del Sur","Simití","Soplaviento","Talaigua Nuevo","Tiquisio","Turbaco","Turbaná","Villanueva","Zambrano"]},{"departamento":"Boyacá","municipios":["Almeida","Aquitania","Arcabuco","Belén","Berbeo","Betéitiva","Boavita","Boyacá","Briceño","Buenavista","Busbanzá","Caldas","Campohermoso","Cerinza","Chinavita","Chiquinquirá","Chiscas","Chita","Chitaraque","Chivatá","Chivor","Chíquiza","Ciénega","Coper","Corrales","Covarachía","Cubará","Cucaita","Cuítiva","Cómbita","Duitama","El Cocuy","El Espino","Firavitoba","Floresta","Gachantivá","Garagoa","Guacamayas","Guateque","Guayatá","Gámeza","Güicán","Iza","Jenesano","Jericó","La Capilla","La Uvita","La Victoria","Labranzagrande","Macanal","Maripí","Miraflores","Mongua","Monguí","Moniquirá","Motavita","Muzo","Nobsa","Nuevo Colón","Oicatá","Otanche","Pachavita","Paipa","Pajarito","Panqueba","Pauna","Paya","Paz del Río","Pesca","Pisba","Puerto Boyacá","Páez","Quípama","Ramiriquí","Rondón","Ráquira","Saboyá","Samacá","San Eduardo","San José de Pare","San Luis de Gaceno","San Mateo","San Miguel de Sema","San Pablo de Borbur","Santa María","Santa Rosa de Viterbo","Santa Sofía","Santana","Sativanorte","Sativasur","Siachoque","Soatá","Socha","Socotá","Sogamoso","Somondoco","Sora","Soracá","Sotaquirá","Susacón","Sutamarchán","Sutatenza","Sáchica","Tasco","Tenza","Tibaná","Tibasosa","Tinjacá","Tipacoque","Toca","Togüí","Tota","Tunja","Tununguá","Turmequé","Tuta","Tutazá","Tópaga","Ventaquemada","Villa de Leyva","Viracachá","Zetaquira","Úmbita"]},{"departamento":"Caldas","municipios":["Aguadas","Anserma","Aranzazu","Belalcázar","Chinchiná","Filadelfia","La Dorada","La Merced","Manizales","Manzanares","Marmato","Marquetalia","Marulanda","Neira","Norcasia","Palestina","Pensilvania","Pácora","Riosucio","Risaralda","Salamina","Samaná","San José","Supía","Victoria","Villamaría","Viterbo"]},{"departamento":"Caquetá","municipios":["Albania","Belén de los Andaquíes","Cartagena del Chairá","Curillo","El Doncello","El Paujil","Florencia","La Montañita","Milán","Morelia","Puerto Rico","San José del Fragua","San Vicente del Caguán","Solano","Solita","Valparaíso"]},{"departamento":"Casanare","municipios":["Aguazul","Chámeza","Hato Corozal","La Salina","Maní","Monterrey","Nunchía","Orocué","Paz de Ariporo","Pore","Recetor","Sabanalarga","San Luis de Palenque","Sácama","Tauramena","Trinidad","Támara","Villanueva","Yopal"]},{"departamento":"Cauca","municipios":["Almaguer","Argelia","Balboa","Bolívar","Buenos Aires","Cajibío","Caldono","Caloto","Corinto","El Tambo","Florencia","Guachené","Guapí","Inzá","Jambaló","La Sierra","La Vega","López de Micay","Mercaderes","Miranda","Morales","Padilla","Patía","Piamonte","Piendamó","Popayán","Puerto Tejada","Puracé","Páez","Rosas","San Sebastián","Santa Rosa","Santander de Quilichao","Silvia","Sotará","Sucre","Suárez","Timbiquí","Timbío","Toribío","Totoró","Villa Rica"]},{"departamento":"Cesar","municipios":["Aguachica","Agustín Codazzi","Astrea","Becerril","Bosconia","Chimichagua","Chiriguaná","Curumaní","El Copey","El Paso","Gamarra","González","La Gloria (Cesar)","La Jagua de Ibirico","La Paz","Manaure Balcón del Cesar","Pailitas","Pelaya","Pueblo Bello","Río de Oro","San Alberto","San Diego","San Martín","Tamalameque","Valledupar"]},{"departamento":"Chocó","municipios":["Acandí","Alto Baudó","Bagadó","Bahía Solano","Bajo Baudó","Bojayá","Cantón de San Pablo","Condoto","Cértegui","El Atrato","El Carmen de Atrato","El Carmen del Darién","Istmina","Juradó","Litoral de San Juan","Lloró","Medio Atrato","Medio Baudó","Medio San Juan","Nuquí","Nóvita","Quibdó","Riosucio","Río Iró","Río Quito","San José del Palmar","Sipí","Tadó","Unguía","Unión Panamericana"]},{"departamento":"Cundinamarca","municipios":["Agua de Dios","Albán","Anapoima","Anolaima","Apulo","Arbeláez","Beltrán","Bituima","Bojacá","Cabrera","Cachipay","Cajicá","Caparrapí","Carmen de Carupa","Chaguaní","Chipaque","Choachí","Chocontá","Chía","Cogua","Cota","Cucunubá","Cáqueza","El Colegio","El Peñón","El Rosal","Facatativá","Fosca","Funza","Fusagasugá","Fómeque","Fúquene","Gachalá","Gachancipá","Gachetá","Gama","Girardot","Granada","Guachetá","Guaduas","Guasca","Guataquí","Guatavita","Guayabal de Síquima","Guayabetal","Gutiérrez","Jerusalén","Junín","La Calera","La Mesa","La Palma","La Peña","La Vega","Lenguazaque","Machetá","Madrid","Manta","Medina","Mosquera","Nariño","Nemocón","Nilo","Nimaima","Nocaima","Pacho","Paime","Pandi","Paratebueno","Pasca","Puerto Salgar","Pulí","Quebradanegra","Quetame","Quipile","Ricaurte","San Antonio del Tequendama","San Bernardo","San Cayetano","San Francisco","San Juan de Rioseco","Sasaima","Sesquilé","Sibaté","Silvania","Simijaca","Soacha","Sopó","Subachoque","Suesca","Supatá","Susa","Sutatausa","Tabio","Tausa","Tena","Tenjo","Tibacuy","Tibirita","Tocaima","Tocancipá","Topaipí","Ubalá","Ubaque","Ubaté","Une","Venecia","Vergara","Vianí","Villagómez","Villapinzón","Villeta","Viotá","Yacopí","Zipacón","Zipaquirá","Útica"]},{"departamento":"Córdoba","municipios":["Ayapel","Buenavista","Canalete","Cereté","Chimá","Chinú","Ciénaga de Oro","Cotorra","La Apartada","Lorica","Los Córdobas","Momil","Montelíbano","Montería","Moñitos","Planeta Rica","Pueblo Nuevo","Puerto Escondido","Puerto Libertador","Purísima","Sahagún","San Andrés de Sotavento","San Antero","San Bernardo del Viento","San Carlos","San José de Uré","San Pelayo","Tierralta","Tuchín","Valencia"]},{"departamento":"Guainía","municipios":["Inírida"]},{"departamento":"Guaviare","municipios":["Calamar","El Retorno","Miraflores","San José del Guaviare"]},{"departamento":"Huila","municipios":["Acevedo","Agrado","Aipe","Algeciras","Altamira","Baraya","Campoalegre","Colombia","El Pital","Elías","Garzón","Gigante","Guadalupe","Hobo","Isnos","La Argentina","La Plata","Neiva","Nátaga","Oporapa","Paicol","Palermo","Palestina","Pitalito","Rivera","Saladoblanco","San Agustín","Santa María","Suaza","Tarqui","Tello","Teruel","Tesalia","Timaná","Villavieja","Yaguará","Íquira"]},{"departamento":"La Guajira","municipios":["Albania","Barrancas","Dibulla","Distracción","El Molino","Fonseca","Hatonuevo","La Jagua del Pilar","Maicao","Manaure","Riohacha","San Juan del Cesar","Uribia","Urumita","Villanueva"]},{"departamento":"Magdalena","municipios":["Algarrobo","Aracataca","Ariguaní","Cerro de San Antonio","Chibolo","Chibolo","Ciénaga","Concordia","El Banco","El Piñón","El Retén","Fundación","Guamal","Nueva Granada","Pedraza","Pijiño del Carmen","Pivijay","Plato","Pueblo Viejo","Remolino","Sabanas de San Ángel","Salamina","San Sebastián de Buenavista","San Zenón","Santa Ana","Santa Bárbara de Pinto","Santa Marta","Sitionuevo","Tenerife","Zapayán","Zona Bananera"]},{"departamento":"Meta","municipios":["Acacías","Barranca de Upía","Cabuyaro","Castilla la Nueva","Cubarral","Cumaral","El Calvario","El Castillo","El Dorado","Fuente de Oro","Granada","Guamal","La Macarena","La Uribe","Lejanías","Mapiripán","Mesetas","Puerto Concordia","Puerto Gaitán","Puerto Lleras","Puerto López","Puerto Rico","Restrepo","San Carlos de Guaroa","San Juan de Arama","San Juanito","San Martín","Villavicencio","Vista Hermosa"]},{"departamento":"Nariño","municipios":["Aldana","Ancuyá","Arboleda","Barbacoas","Belén","Buesaco","Chachagüí","Colón","Consacá","Contadero","Cuaspud","Cumbal","Cumbitara","Córdoba","El Charco","El Peñol","El Rosario","El Tablón","El Tambo","Francisco Pizarro","Funes","Guachucal","Guaitarilla","Gualmatán","Iles","Imués","Ipiales","La Cruz","La Florida","La Llanada","La Tola","La Unión","Leiva","Linares","Los Andes","Magüí Payán","Mallama","Mosquera","Nariño","Olaya Herrera","Ospina","Pasto","Policarpa","Potosí","Providencia","Puerres","Pupiales","Ricaurte","Roberto Payán","Samaniego","San Bernardo","San José de Albán","San Lorenzo","San Pablo","San Pedro de Cartago","Sandoná","Santa Bárbara","Santacruz","Sapuyes","Taminango","Tangua","Tumaco","Túquerres","Yacuanquer"]},{"departamento":"Norte de Santander","municipios":["Arboledas","Bochalema","Bucarasica","Chinácota","Chitagá","Convención","Cucutilla","Cáchira","Cácota","Cúcuta","Duranía","El Carmen","El Tarra","El Zulia","Gramalote","Hacarí","Herrán","La Esperanza","La Playa de Belén","Labateca","Los Patios","Lourdes","Mutiscua","Ocaña","Pamplona","Pamplonita","Puerto Santander","Ragonvalia","Salazar de Las Palmas","San Calixto","San Cayetano","Santiago","Santo Domingo de Silos","Sardinata","Teorama","Tibú","Toledo","Villa Caro","Villa del Rosario","Ábrego"]},{"departamento":"Putumayo","municipios":["Colón","Mocoa","Orito","Puerto Asís","Puerto Caicedo","Puerto Guzmán","Puerto Leguízamo","San Francisco","San Miguel","Santiago","Sibundoy","Valle del Guamuez","Villagarzón"]},{"departamento":"Quindío","municipios":["Armenia","Buenavista","Calarcá","Circasia","Córdoba","Filandia","Génova","La Tebaida","Montenegro","Pijao","Quimbaya","Salento"]},{"departamento":"Risaralda","municipios":["Apía","Balboa","Belén de Umbría","Dosquebradas","Guática","La Celia","La Virginia","Marsella","Mistrató","Pereira","Pueblo Rico","Quinchía","Santa Rosa de Cabal","Santuario"]},{"departamento":"San Andrés y Providencia","municipios":["Providencia y Santa Catalina Islas","San Andrés"]},{"departamento":"Santander","municipios":["Aguada","Albania","Aratoca","Barbosa","Barichara","Barrancabermeja","Betulia","Bolívar","Bucaramanga","Cabrera","California","Capitanejo","Carcasí","Cepitá","Cerrito","Charalá","Charta","Chima","Chipatá","Cimitarra","Concepción","Confines","Contratación","Coromoro","Curití","El Carmen de Chucurí","El Guacamayo","El Peñón","El Playón","El Socorro","Encino","Enciso","Floridablanca","Florián","Galán","Girón","Guaca","Guadalupe","Guapotá","Guavatá","Gámbita","Güepsa","Hato","Jesús María","Jordán","La Belleza","La Paz","Landázuri","Lebrija","Los Santos","Macaravita","Matanza","Mogotes","Molagavita","Málaga","Ocamonte","Oiba","Onzaga","Palmar","Palmas del Socorro","Piedecuesta","Pinchote","Puente Nacional","Puerto Parra","Puerto Wilches","Páramo","Rionegro","Sabana de Torres","San Andrés","San Benito","San Gil","San Joaquín","San José de Miranda","San Miguel","San Vicente de Chucurí","Santa Bárbara","Santa Helena del Opón","Simacota","Suaita","Sucre","Suratá","Tona","Valle de San José","Vetas","Villanueva","Vélez","Zapatoca"]},{"departamento":"Sucre","municipios":["Buenavista","Caimito","Chalán","Colosó","Corozal","Coveñas","El Roble","Galeras","Guaranda","La Unión","Los Palmitos","Majagual","Morroa","Ovejas","Sampués","San Antonio de Palmito","San Benito Abad","San Juan de Betulia","San Marcos","San Onofre","San Pedro","Sincelejo","Sincé","Sucre","Tolú","Tolú Viejo"]},{"departamento":"Tolima","municipios":["Alpujarra","Alvarado","Ambalema","Anzoátegui","Armero","Ataco","Cajamarca","Carmen de Apicalá","Casabianca","Chaparral","Coello","Coyaima","Cunday","Dolores","El Espinal","Falán","Flandes","Fresno","Guamo","Herveo","Honda","Ibagué","Icononzo","Lérida","Líbano","Mariquita","Melgar","Murillo","Natagaima","Ortega","Palocabildo","Piedras","Planadas","Prado","Purificación","Rioblanco","Roncesvalles","Rovira","Saldaña","San Antonio","San Luis","Santa Isabel","Suárez","Valle de San Juan","Venadillo","Villahermosa","Villarrica"]},{"departamento":"Valle del Cauca","municipios":["Alcalá","Andalucía","Ansermanuevo","Argelia","Bolívar","Buenaventura","Buga","Bugalagrande","Caicedonia","Cali","Calima","Candelaria","Cartago","Dagua","El Cairo","El Cerrito","El Dovio","El Águila","Florida","Ginebra","Guacarí","Jamundí","La Cumbre","La Unión","La Victoria","Obando","Palmira","Pradera","Restrepo","Riofrío","Roldanillo","San Pedro","Sevilla","Toro","Trujillo","Tuluá","Ulloa","Versalles","Vijes","Yotoco","Yumbo","Zarzal"]},{"departamento":"Vaupés","municipios":["Carurú","Mitú","Taraira"]},{"departamento":"Vichada","municipios":["Cumaribo","La Primavera","Puerto Carreño","Santa Rosalía"]}];
+
+// Selector encadenado departamento -> municipio. onChange(departamento, municipio) - el consumidor
+// normalmente solo persiste/muestra el municipio (p.ej. la ruta de un extracto solo debe mostrar
+// el municipio elegido en cada punto, no el departamento).
+function MunicipioField({ label, depValue, munValue, onChange }) {
+  const dept = COLOMBIA_DEPARTAMENTOS.find(d => d.departamento === depValue);
+  const municipios = dept ? dept.municipios : [];
+  return React.createElement("div", { className: "fg2" },
+    React.createElement("div", { className: "fg" },
+      React.createElement("label", { className: "fl" }, label + " — Departamento"),
+      React.createElement("select", {
+        className: "fsel", value: depValue,
+        onChange: e => onChange(e.target.value, ""),
+      },
+        React.createElement("option", { value: "" }, "— Seleccionar —"),
+        COLOMBIA_DEPARTAMENTOS.map(d => React.createElement("option", { key: d.departamento, value: d.departamento }, d.departamento)))),
+    React.createElement("div", { className: "fg" },
+      React.createElement("label", { className: "fl" }, label + " — Municipio"),
+      React.createElement("select", {
+        className: "fsel", value: munValue, disabled: !depValue,
+        onChange: e => onChange(depValue, e.target.value),
+      },
+        React.createElement("option", { value: "" }, depValue ? "— Seleccionar —" : "Primero elige el departamento"),
+        municipios.map(m => React.createElement("option", { key: m, value: m }, m)))));
+}
+
 
 function getTareasPendientes(usuario) {
   if (typeof _tareasStore === 'undefined') return [];
@@ -11572,6 +11600,214 @@ function updatePlanilla(id, upd) {
     ...upd
   } : p);
 }
+
+// ─── Portal del Afiliado: Extractos (única sección conectada a la API real — el resto de este
+// portal es una simulación con datos locales). Reutiliza extracto_clientes/extracto_contratos/
+// tarifario_items (§9 de docs/BACKEND_DESIGN.md): el afiliado carga un contrato de Grupo
+// Específico con la ruta del servicio (origen/destino como municipios de Colombia), Trámites lo
+// autoriza, y solo entonces puede generar extractos con ese contrato. ───
+function NuevoContratoAfiliadoForm({ toast, onCreado }) {
+  const [nombreCliente, setNombreCliente] = React.useState('');
+  const [documentoCliente, setDocumentoCliente] = React.useState('');
+  const [objeto, setObjeto] = React.useState('');
+  const [tipoServicio, setTipoServicio] = React.useState(Object.keys(PRODUCTOS_SERVICIO)[0]);
+  const [depOrigen, setDepOrigen] = React.useState('');
+  const [munOrigen, setMunOrigen] = React.useState('');
+  const [depDestino, setDepDestino] = React.useState('');
+  const [munDestino, setMunDestino] = React.useState('');
+  const [fechaInicio, setFechaInicio] = React.useState('');
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [archivoFirmado, setArchivoFirmado] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  function leerArchivo(file) {
+    if (!file) { setArchivoFirmado(null); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => setArchivoFirmado({ url: reader.result, nombre: file.name });
+    reader.readAsDataURL(file);
+  }
+
+  async function crear() {
+    setError('');
+    if (!nombreCliente.trim()) { setError('Indica el nombre del grupo/cliente para el que prestas el servicio'); return; }
+    if (!munOrigen || !munDestino) { setError('Selecciona el municipio de origen y de destino'); return; }
+    if (!fechaInicio || !fechaFin) { setError('La vigencia del contrato es obligatoria'); return; }
+    if (!archivoFirmado) { setError('Debes cargar el contrato firmado'); return; }
+    setLoading(true);
+    try {
+      const cliente = await extApiSend('POST', '/api/extractos/clientes', { nombre: nombreCliente, documento: documentoCliente });
+      const contrato = await extApiSend('POST', '/api/extractos/contratos', {
+        clienteId: cliente.id, modalidad: 'GRUPO_ESPECIFICO', objeto,
+        fechaInicio, fechaFin, archivoFirmadoUrl: archivoFirmado.url,
+      });
+      await extApiSend('PUT', `/api/extractos/clientes/${cliente.id}/tarifario`, {
+        items: [{ tipoServicio, tipoVehiculo: 'Cualquiera', origen: munOrigen, destino: munDestino, valorServicio: 0, pagoAfiliado: 0 }],
+      });
+      toast('Contrato enviado a validación del Área de Trámites', 'success');
+      setNombreCliente(''); setDocumentoCliente(''); setObjeto('');
+      setDepOrigen(''); setMunOrigen(''); setDepDestino(''); setMunDestino('');
+      setFechaInicio(''); setFechaFin(''); setArchivoFirmado(null);
+      onCreado();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement('div', { className: 'card' },
+    React.createElement('div', { className: 'ch' }, React.createElement('span', { className: 'ct' }, '📄 Cargar contrato de Grupo Específico')),
+    React.createElement('div', { className: 'cb' },
+      error && React.createElement(Alert, { type: 'danger' }, error),
+      React.createElement(Alert, { type: 'info' }, 'Sube el contrato firmado del grupo específico de usuarios que vas a transportar. Quedará pendiente de aprobación del Área de Trámites — solo podrás generar extractos con este contrato cuando lo aprueben.'),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Nombre del grupo / cliente *'),
+        React.createElement('input', { className: 'fi', value: nombreCliente, onChange: e => setNombreCliente(e.target.value) })),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Documento (NIT/CC, opcional)'),
+        React.createElement('input', { className: 'fi', value: documentoCliente, onChange: e => setDocumentoCliente(e.target.value) })),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Objeto del contrato'),
+        React.createElement('input', { className: 'fi', value: objeto, onChange: e => setObjeto(e.target.value) })),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Tipo de servicio'),
+        React.createElement('select', { className: 'fsel', value: tipoServicio, onChange: e => setTipoServicio(e.target.value) },
+          Object.entries(PRODUCTOS_SERVICIO).map(([k, v]) => React.createElement('option', { key: k, value: k }, v.label)))),
+      React.createElement('div', { className: 'ct', style: { fontSize: 12, margin: '10px 0 6px' } }, 'Ruta del servicio (municipios de Colombia)'),
+      React.createElement(MunicipioField, { label: 'Origen', depValue: depOrigen, munValue: munOrigen, onChange: (d, m) => { setDepOrigen(d); setMunOrigen(m); } }),
+      React.createElement(MunicipioField, { label: 'Destino', depValue: depDestino, munValue: munDestino, onChange: (d, m) => { setDepDestino(d); setMunDestino(m); } }),
+      React.createElement('div', { className: 'fg2 mt3' },
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Fecha inicio *'),
+          React.createElement('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Fecha fin * (máx. 1 año)'),
+          React.createElement('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) }))),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Contrato firmado (PDF/imagen) *'),
+        React.createElement('input', { type: 'file', onChange: e => leerArchivo(e.target.files[0]) }),
+        archivoFirmado && React.createElement('div', { className: 'txs tmut mt2' }, `Cargado: ${archivoFirmado.nombre}`)),
+      React.createElement('button', { className: 'btn bp mt3', disabled: loading, onClick: crear }, loading ? 'Enviando…' : 'Enviar a validación de Trámites')));
+}
+
+function GenerarExtractoAfiliadoModal({ contrato, open, onClose, toast, vehiculos, onGenerado }) {
+  const [tarifarioItem, setTarifarioItem] = React.useState(null);
+  const [vehiculoId, setVehiculoId] = React.useState('');
+  const [conductorId, setConductorId] = React.useState('');
+  const [fechaInicio, setFechaInicio] = React.useState('');
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [acepta, setAcepta] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open || !contrato) return;
+    setVehiculoId(''); setConductorId(''); setFechaInicio(''); setFechaFin(''); setAcepta(false); setError('');
+    extApiGet(`/api/extractos/clientes/${contrato.cliente.id}/tarifario`).then(items => setTarifarioItem(items[0] || null)).catch(e => toast(e.message, 'danger'));
+  }, [open, contrato]);
+
+  if (!open || !contrato) return null;
+  const conductoresDelVehiculo = vehiculoId ? getConductores().filter(c => c.activo && c.vehiculo === vehiculoId) : [];
+
+  async function generar() {
+    setError('');
+    if (!vehiculoId || !conductorId || !fechaInicio || !fechaFin) { setError('Completa vehículo, conductor y vigencia'); return; }
+    if (!tarifarioItem) { setError('Este contrato no tiene una ruta configurada'); return; }
+    if (!acepta) { setError('Debes aceptar la declaración de responsabilidad'); return; }
+    setLoading(true);
+    try {
+      const extracto = await extApiSend('POST', '/api/extractos', {
+        contratoId: contrato.id, vehiculoId, conductorIds: [conductorId],
+        fechaInicio, fechaFin, tarifarioItemId: tarifarioItem.id, generadoPorTipo: 'AFILIADO', aceptaDeclaracion: true,
+      });
+      toast(`Extracto ${extracto.numero_fuec} generado`, 'success');
+      onGenerado();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement(Modal, { open, onClose, title: `Generar extracto — ${contrato.cliente.nombre}` },
+    React.createElement('div', { className: 'mb' },
+      error && React.createElement(Alert, { type: 'danger' }, error),
+      tarifarioItem
+        ? React.createElement(Alert, { type: 'info' }, `Ruta autorizada: ${tarifarioItem.origen} → ${tarifarioItem.destino}`)
+        : React.createElement(Alert, { type: 'warn' }, 'Cargando la ruta del contrato…'),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Vehículo *'),
+        React.createElement('select', { className: 'fsel', value: vehiculoId, onChange: e => { setVehiculoId(e.target.value); setConductorId(''); } },
+          React.createElement('option', { value: '' }, '— Seleccionar —'),
+          vehiculos.map(v => React.createElement('option', { key: v.id, value: v.id }, `${v.placa} — ${v.marca} ${v.linea}`)))),
+      React.createElement('div', { className: 'fg' },
+        React.createElement('label', { className: 'fl' }, 'Conductor *'),
+        React.createElement('select', { className: 'fsel', value: conductorId, disabled: !vehiculoId, onChange: e => setConductorId(e.target.value) },
+          React.createElement('option', { value: '' }, vehiculoId ? '— Seleccionar —' : 'Primero elige el vehículo'),
+          conductoresDelVehiculo.map(c => React.createElement('option', { key: c.id, value: c.id }, `${c.nombre} — CC ${c.cedula}`)))),
+      React.createElement('div', { className: 'fg2' },
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Fecha inicio *'),
+          React.createElement('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Fecha fin *'),
+          React.createElement('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) }))),
+      React.createElement('div', { className: 'al al-info' },
+        React.createElement('label', { className: 'flex gap2', style: { alignItems: 'flex-start', cursor: 'pointer' } },
+          React.createElement('input', { type: 'checkbox', checked: acepta, onChange: e => setAcepta(e.target.checked), style: { marginTop: 2 } }),
+          React.createElement('span', null, 'Declaro bajo mi responsabilidad que la información registrada en este extracto corresponde a una operación real y cumple las condiciones legales y contractuales aplicables.')))),
+    React.createElement('div', { className: 'mf' },
+      React.createElement('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
+      React.createElement('button', { className: 'btn bp', disabled: loading, onClick: generar }, loading ? 'Validando…' : '📄 Generar extracto')));
+}
+
+function MisContratosAfiliado({ toast, contratos, loading, vehiculosDisponibles, onRefrescar }) {
+  const [generarPara, setGenerarPara] = React.useState(null);
+  if (loading) return React.createElement('div', { className: 'empty' }, React.createElement('p', null, 'Cargando…'));
+  return React.createElement('div', null,
+    contratos.length === 0
+      ? React.createElement('div', { className: 'empty' },
+          React.createElement('p', null, 'Sin contratos de grupo específico'),
+          React.createElement('p', { className: 'txs' }, 'Carga el primero en "+ Cargar contrato"'))
+      : React.createElement('div', { className: 'card' }, React.createElement('div', { className: 'tw' }, React.createElement('table', null,
+          React.createElement('thead', null, React.createElement('tr', null,
+            React.createElement('th', null, 'Cliente'), React.createElement('th', null, 'Vigencia'), React.createElement('th', null, 'Estado'), React.createElement('th', null))),
+          React.createElement('tbody', null, contratos.map(k => {
+            const est = EXT_ESTADOS_CONTRATO[k.estado] || { label: k.estado, badge: 'bgr' };
+            return React.createElement('tr', { key: k.id },
+              React.createElement('td', null, k.cliente.nombre),
+              React.createElement('td', { className: 'tsr' }, `${fmtD(k.fecha_inicio)} — ${fmtD(k.fecha_fin)}`),
+              React.createElement('td', null, React.createElement('span', { className: `badge ${est.badge}` }, est.label)),
+              React.createElement('td', null, k.estado === 'APROBADO' && React.createElement('button', { className: 'btn btn-sm bp', onClick: () => setGenerarPara(k) }, '📄 Generar extracto')));
+          }))))),
+    React.createElement(GenerarExtractoAfiliadoModal, {
+      contrato: generarPara, open: !!generarPara, onClose: () => setGenerarPara(null), toast,
+      vehiculos: vehiculosDisponibles, onGenerado: () => { setGenerarPara(null); onRefrescar(); },
+    }));
+}
+
+function PortalAfiliadoExtractos({ toast, vehiculosDisponibles }) {
+  const [tab, setTab] = React.useState('nuevo');
+  const [contratos, setContratos] = React.useState([]);
+  const [loadingContratos, setLoadingContratos] = React.useState(true);
+
+  function refresh() {
+    return extApiGet('/api/extractos/contratos')
+      .then(cs => setContratos(cs.filter(c => c.modalidad === 'GRUPO_ESPECIFICO')))
+      .catch(e => toast(e.message, 'danger'));
+  }
+  React.useEffect(() => { refresh().finally(() => setLoadingContratos(false)); }, []);
+
+  return React.createElement('div', null,
+    React.createElement('div', { className: 'tabs' },
+      React.createElement('div', { className: `tab ${tab === 'nuevo' ? 'act' : ''}`, onClick: () => setTab('nuevo') }, '+ Cargar contrato'),
+      React.createElement('div', { className: `tab ${tab === 'mis' ? 'act' : ''}`, onClick: () => setTab('mis') }, `Mis contratos (${contratos.length})`)),
+    tab === 'nuevo'
+      ? React.createElement(NuevoContratoAfiliadoForm, { toast, onCreado: () => { refresh(); setTab('mis'); } })
+      : React.createElement(MisContratosAfiliado, { toast, contratos, loading: loadingContratos, vehiculosDisponibles, onRefrescar: refresh }));
+}
+
 function PortalAfiliado({
   toast
 }) {
@@ -11906,6 +12142,9 @@ function PortalAfiliado({
     }, {
       id: 'nuevo',
       label: '➕ Afiliar nuevo vehículo'
+    }, {
+      id: 'extractos',
+      label: '📄 Extractos'
     }],
     active: vista,
     onChange: setVista
@@ -12380,7 +12619,10 @@ function PortalAfiliado({
         color: 'var(--t3)'
       }
     }, c.revisadoPor || '—'));
-  }))))), vista === 'nuevo' && /*#__PURE__*/React.createElement(PortalAfiliadoNuevoVehiculo, {
+  }))))), vista === 'extractos' && /*#__PURE__*/React.createElement(PortalAfiliadoExtractos, {
+    toast: toast,
+    vehiculosDisponibles: misVehiculos
+  }), vista === 'nuevo' && /*#__PURE__*/React.createElement(PortalAfiliadoNuevoVehiculo, {
     toast: toast,
     onEnviado: () => setVista('historial'),
     misSolicitudes: misSolicitudesNuevoVeh
@@ -17498,7 +17740,8 @@ function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
           rc('div', { className: 'tl-body' },
             rc('div', { className: 'tl-meta' }, rc('span', { className: 'tl-user' }, hi.usuario), rc('span', { className: 'tl-date' }, hi.fecha)),
             rc('div', { className: 'tl-action' }, hi.accion),
-            hi.nota && rc('div', { className: 'tl-note' }, hi.nota))))
+            hi.nota && rc('div', { className: 'tl-note' }, hi.nota),
+            hi.firma_url && rc('img', { src: hi.firma_url, style: { maxWidth: 160, marginTop: 6, background: '#fff', border: '1px solid var(--border2)', borderRadius: 'var(--r-sm)' } }))))
       ),
     ),
     rc('div', { className: 'mf' }, rc('button', { className: 'btn bs', onClick: onClose }, 'Cerrar')),
@@ -17599,7 +17842,7 @@ function GenerarExtractoForm({ toast, onGenerado }) {
   const [contratos, setContratos] = React.useState([]);
   const [contratoId, setContratoId] = React.useState('');
   const [vehiculoId, setVehiculoId] = React.useState('');
-  const [conductorIds, setConductorIds] = React.useState(['']);
+  const [conductorIds, setConductorIds] = React.useState(['', '', '']);
   const [fechaInicio, setFechaInicio] = React.useState('');
   const [fechaFin, setFechaFin] = React.useState('');
   const [tarifarioCliente, setTarifarioCliente] = React.useState([]);
@@ -17624,7 +17867,7 @@ function GenerarExtractoForm({ toast, onGenerado }) {
   const conductores = getConductores().filter(c => c.activo);
 
   function setConductorAt(i, val) {
-    setConductorIds(p => p.map((x, j) => j === i ? val : x));
+    setConductorIds(p => { const next = p.slice(); next[i] = val; return next; });
   }
 
   async function generar() {
@@ -17639,7 +17882,7 @@ function GenerarExtractoForm({ toast, onGenerado }) {
         fechaInicio, fechaFin, tarifarioItemId: Number(tarifarioItemId), generadoPorTipo, aceptaDeclaracion: true,
       });
       toast(`Extracto ${extracto.numero_fuec} generado`, 'success');
-      setContratoId(''); setVehiculoId(''); setConductorIds(['']); setFechaInicio(''); setFechaFin(''); setAcepta(false);
+      setContratoId(''); setVehiculoId(''); setConductorIds(['', '', '']); setFechaInicio(''); setFechaFin(''); setAcepta(false);
       onGenerado(extracto);
     } catch (e) {
       setError(e.message);
@@ -17729,7 +17972,7 @@ function ExtractoDetalleModal({ extracto, open, onClose, toast, onChanged }) {
         rc('span', { className: `badge ${EXT_ESTADOS_EXTRACTO_BADGE[extracto.estado] || 'bgr'}` }, extracto.estado),
         rc('div', { className: 'flex gap2' },
           rc('button', { className: 'btn bs btn-sm', onClick: () => imprimirFuec(extracto, toast) }, '🖨 Imprimir / QR'),
-          rc('button', { className: 'btn bs btn-sm', onClick: () => setShowDuplicar(true) }, '⧉ Duplicar'),
+          rc('button', { className: 'btn bs btn-sm', onClick: () => setShowDuplicar(true) }, '⧉ Duplicar extracto'),
           extracto.estado !== 'ANULADO' && rc('button', { className: 'btn bd btn-sm', onClick: anular }, '✕ Anular'),
         )
       ),
@@ -17752,6 +17995,7 @@ function ExtractoDetalleModal({ extracto, open, onClose, toast, onChanged }) {
       ),
       showDuplicar && rc('div', { className: 'card mt3' }, rc('div', { className: 'cb' },
         error && rc(Alert, { type: 'danger' }, error),
+        rc(Alert, { type: 'info' }, 'La plataforma copiará cliente, vehículo, conductor, ruta y datos contractuales, pero generará un nuevo consecutivo, nueva fecha de creación y la vigencia que indiques abajo — sin alterar este extracto ni sus documentos históricos.'),
         rc('div', { className: 'fg2' },
           rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Nueva fecha inicio'),
             rc('input', { className: 'fi', type: 'date', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
@@ -17775,25 +18019,92 @@ function ExtractosListado({ toast }) {
   const [extractos, setExtractos] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [sel, setSel] = React.useState(null);
+  const [fCliente, setFCliente] = React.useState('todos');
+  const [fPlaca, setFPlaca] = React.useState('');
+  const [fNumero, setFNumero] = React.useState('');
+  const [fConductor, setFConductor] = React.useState('');
+  const [fEstado, setFEstado] = React.useState('Todos');
+  const [fModalidad, setFModalidad] = React.useState('todas');
+  const [fCreadoDesde, setFCreadoDesde] = React.useState('');
+  const [fCreadoHasta, setFCreadoHasta] = React.useState('');
+  const [fVigDesde, setFVigDesde] = React.useState('');
+  const [fVigHasta, setFVigHasta] = React.useState('');
 
   function refresh() {
     return extApiGet('/api/extractos').then(setExtractos).catch(e => toast(e.message, 'danger'));
   }
   React.useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
 
+  const clientes = [...new Map(extractos.map(e => [e.contrato.cliente.id, e.contrato.cliente])).values()];
+  const filtrosActivos = fCliente !== 'todos' || fPlaca || fNumero || fConductor || fEstado !== 'Todos' || fModalidad !== 'todas' || fCreadoDesde || fCreadoHasta || fVigDesde || fVigHasta;
+  const clearFiltros = () => {
+    setFCliente('todos'); setFPlaca(''); setFNumero(''); setFConductor(''); setFEstado('Todos');
+    setFModalidad('todas'); setFCreadoDesde(''); setFCreadoHasta(''); setFVigDesde(''); setFVigHasta('');
+  };
+  const filtrados = extractos.filter(e => {
+    if (fCliente !== 'todos' && e.contrato.cliente.id !== fCliente) return false;
+    if (fPlaca.trim() && !e.vehiculo.placa.toLowerCase().includes(fPlaca.trim().toLowerCase())) return false;
+    if (fNumero.trim() && !e.numero_fuec.includes(fNumero.trim())) return false;
+    if (fConductor.trim() && !e.conductores.some(c => c.nombre.toLowerCase().includes(fConductor.trim().toLowerCase()))) return false;
+    if (fEstado !== 'Todos' && e.estado !== fEstado) return false;
+    if (fModalidad !== 'todas' && e.contrato.modalidad !== fModalidad) return false;
+    if (fCreadoDesde && e.created_at.slice(0, 10) < fCreadoDesde) return false;
+    if (fCreadoHasta && e.created_at.slice(0, 10) > fCreadoHasta) return false;
+    if (fVigDesde && e.fecha_fin < fVigDesde) return false;
+    if (fVigHasta && e.fecha_inicio > fVigHasta) return false;
+    return true;
+  });
+
   return rc('div', null,
     rc(GenerarExtractoForm, { toast, onGenerado: (e) => { refresh(); setSel(e); } }),
     rc('div', { className: 'mt4' },
-      rc('div', { className: 'tsr tmut mb2' }, `${extractos.length} extractos generados`),
+      rc('div', { className: 'card mb3' }, rc('div', { className: 'cb' },
+        rc('div', { className: 'ct', style: { fontSize: 12, marginBottom: 10 } }, '🔍 Buscar extractos'),
+        rc('div', { className: 'g3c mb2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Cliente'),
+            rc('select', { className: 'fsel', value: fCliente, onChange: e => setFCliente(e.target.value) },
+              rc('option', { value: 'todos' }, 'Todos'),
+              clientes.map(c => rc('option', { key: c.id, value: c.id }, c.nombre)))),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Placa del vehículo'),
+            rc('input', { className: 'fi', placeholder: 'Ej: BNM-112', value: fPlaca, onChange: e => setFPlaca(e.target.value) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'N° FUEC'),
+            rc('input', { className: 'fi', value: fNumero, onChange: e => setFNumero(e.target.value) })),
+        ),
+        rc('div', { className: 'g3c mb2' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Conductor'),
+            rc('input', { className: 'fi', value: fConductor, onChange: e => setFConductor(e.target.value) })),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Estado'),
+            rc('select', { className: 'fsel', value: fEstado, onChange: e => setFEstado(e.target.value) },
+              ['Todos', 'VIGENTE', 'VENCIDO', 'ANULADO'].map(s => rc('option', { key: s, value: s }, s)))),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Modalidad'),
+            rc('select', { className: 'fsel', value: fModalidad, onChange: e => setFModalidad(e.target.value) },
+              rc('option', { value: 'todas' }, 'Todas'),
+              Object.entries(EXT_MODALIDADES).map(([k, v]) => rc('option', { key: k, value: k }, v)))),
+        ),
+        rc('div', { className: 'g2c' },
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Creado entre'),
+            rc('div', { className: 'flex gap2' },
+              rc('input', { className: 'fi', type: 'date', value: fCreadoDesde, onChange: e => setFCreadoDesde(e.target.value) }),
+              rc('input', { className: 'fi', type: 'date', value: fCreadoHasta, onChange: e => setFCreadoHasta(e.target.value) }))),
+          rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Vigencia entre'),
+            rc('div', { className: 'flex gap2' },
+              rc('input', { className: 'fi', type: 'date', value: fVigDesde, onChange: e => setFVigDesde(e.target.value) }),
+              rc('input', { className: 'fi', type: 'date', value: fVigHasta, onChange: e => setFVigHasta(e.target.value) }))),
+        ),
+        filtrosActivos && rc('button', { className: 'btn bs btn-sm mt2', onClick: clearFiltros }, '✕ Limpiar filtros'),
+      )),
+      rc('div', { className: 'tsr tmut mb2' }, `${filtrados.length} de ${extractos.length} extractos`),
       loading ? rc('div', { className: 'empty' }, rc('p', null, 'Cargando…')) :
       rc('div', { className: 'card' }, rc('div', { className: 'tw' }, rc('table', null,
-        rc('thead', null, rc('tr', null, rc('th', null, 'N° FUEC'), rc('th', null, 'Cliente'), rc('th', null, 'Vehículo'), rc('th', null, 'Vigencia'), rc('th', null, 'Estado'), rc('th', null))),
+        rc('thead', null, rc('tr', null, rc('th', null, 'N° FUEC'), rc('th', null, 'Cliente'), rc('th', null, 'Vehículo'), rc('th', null, 'Conductor(es)'), rc('th', null, 'Creado'), rc('th', null, 'Vigencia'), rc('th', null, 'Estado'), rc('th', null))),
         rc('tbody', null,
-          extractos.length === 0 ? rc('tr', null, rc('td', { colSpan: 6 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin extractos generados')))) :
-          extractos.map(e => rc('tr', { key: e.id },
+          filtrados.length === 0 ? rc('tr', null, rc('td', { colSpan: 8 }, rc('div', { className: 'empty' }, rc('p', null, 'Sin extractos para estos filtros')))) :
+          filtrados.map(e => rc('tr', { key: e.id },
             rc('td', { className: 'tmono', style: { fontSize: 10 } }, e.numero_fuec),
             rc('td', null, e.contrato.cliente.nombre),
             rc('td', null, rc('span', { className: 'placa' }, e.vehiculo.placa)),
+            rc('td', { className: 'txs' }, e.conductores.map(c => c.nombre).join(', ')),
+            rc('td', { className: 'tsr' }, fmtD(e.created_at.slice(0, 10))),
             rc('td', { className: 'tsr' }, `${fmtD(e.fecha_inicio)} — ${fmtD(e.fecha_fin)}`),
             rc('td', null, rc('span', { className: `badge ${EXT_ESTADOS_EXTRACTO_BADGE[e.estado] || 'bgr'}` }, e.estado)),
             rc('td', null, rc('button', { className: 'btn btn-sm bs', onClick: () => setSel(e) }, 'Ver'))
@@ -20902,7 +21213,7 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     )
   );
 }
-function AccionesMenu({ onVer, onEditar, onCancelar, onLiquidar, cancelado, liquidado }) {
+function AccionesMenu({ onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, cancelado, liquidado }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = React.useRef(null);
@@ -20920,6 +21231,7 @@ function AccionesMenu({ onVer, onEditar, onCancelar, onLiquidar, cancelado, liqu
       h('div', { className: 'card', style: { position: 'fixed', top: pos.top, left: pos.left, zIndex: 401, minWidth: 180, padding: 4, boxShadow: 'var(--sh-lg)' } },
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onVer(); } }, '👁 Ver servicio'),
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onEditar(); } }, '✎ Editar servicio'),
+        onGenerarExtracto && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onGenerarExtracto(); } }, '📄 Generar extracto'),
         !cancelado && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2, color: 'var(--red)' }, onClick: () => { setOpen(false); onCancelar(); } }, '🚫 Cancelar servicio'),
         !cancelado && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none' }, onClick: () => { setOpen(false); onLiquidar(); } }, liquidado ? '🧾 Ver liquidación' : '🧾 Liquidar servicio')
       )
@@ -21024,7 +21336,10 @@ function Servicios({ toast }) {
   const refresh = () => {
     setList(getServiciosStore().slice());
     extApiGet('/api/contratos').then(setContratosReales).catch(e => toast(e.message, 'danger'));
-    extApiGet('/api/servicios').then(real => setList(l => [...getServiciosStore(), ...real])).catch(e => toast(e.message, 'danger'));
+    extApiGet('/api/servicios').then(real => setList(l => [
+      ...getServiciosStore(),
+      ...real.map(s => ({ ...s, contratoId: s.contrato_id, vehiculoId: s.vehiculo_id, conductorId: s.conductor_id })),
+    ])).catch(e => toast(e.message, 'danger'));
   };
   useEffect(() => { refresh(); }, []);
   const handleGuardarTarifa = (contratoId, entry) => {
@@ -21094,6 +21409,13 @@ function Servicios({ toast }) {
       else updateServicio(s.id, datos);
     } catch (e) { toast(e.message, 'danger'); return; }
     refresh(); setLiquidando(null);
+  };
+  const handleGenerarExtracto = async s => {
+    try {
+      const extracto = await extApiSend('POST', `/api/servicios/${s.id}/generar-extracto`, {});
+      toast(`Extracto ${extracto.numero_fuec} generado`, 'success');
+      refresh();
+    } catch (e) { toast(e.message, 'danger'); }
   };
 
   const total = list.reduce((s, x) => s + (x.valor || 0), 0);
@@ -21175,7 +21497,8 @@ function Servicios({ toast }) {
                             onVer: () => setViewing(s),
                             onEditar: () => { setEditing(s); setModalOpen(true); },
                             onCancelar: () => handleCancelar(s),
-                            onLiquidar: () => setLiquidando(s)
+                            onLiquidar: () => setLiquidando(s),
+                            onGenerarExtracto: (k && k.extracto_cliente_id && !s.extracto_id) ? () => handleGenerarExtracto(s) : undefined
                           }))
                         );
                       })
@@ -23179,7 +23502,7 @@ function AuthGate() {
   const [loginLoading, setLoginLoading] = React.useState(false);
 
   async function bootstrap(user) {
-    Object.assign(USUARIO, { id: user.id, nombre: user.nombre, rol: user.rol, email: user.email });
+    Object.assign(USUARIO, { id: user.id, nombre: user.nombre, rol: user.rol, email: user.email, firma_url: user.firma_url || null });
     try {
       await Promise.all([loadVehiculosStore(), loadConductoresStore()]);
     } catch (e) {
@@ -23224,6 +23547,112 @@ function AuthGate() {
     return React.createElement(LoginScreen, { onLogin: handleLogin, error: loginError, loading: loginLoading });
   }
   return React.createElement(App, null);
+}
+
+// ─── Firma electrónica del usuario — se dibuja en un canvas y queda asociada a las acciones de
+// aprobación de contratos (ver PUT /api/extractos/contratos/:id, que la copia al historial). ───
+function FirmaCanvas({ onSave, disabled }) {
+  const canvasRef = React.useRef(null);
+  const drawingRef = React.useRef(false);
+  const lastRef = React.useRef({ x: 0, y: 0 });
+  const [vacio, setVacio] = React.useState(true);
+
+  function getPos(e) {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+  }
+  function start(e) {
+    e.preventDefault();
+    drawingRef.current = true;
+    lastRef.current = getPos(e);
+  }
+  function move(e) {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext('2d');
+    const pos = getPos(e);
+    ctx.strokeStyle = '#1C1917';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(lastRef.current.x, lastRef.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    lastRef.current = pos;
+    setVacio(false);
+  }
+  function end() { drawingRef.current = false; }
+  function limpiar() {
+    const canvas = canvasRef.current;
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    setVacio(true);
+  }
+  function guardar() {
+    onSave(canvasRef.current.toDataURL('image/png'));
+  }
+
+  return React.createElement('div', null,
+    React.createElement('canvas', {
+      ref: canvasRef, width: 460, height: 160,
+      style: { border: '1px solid var(--border2)', borderRadius: 'var(--r-sm)', background: '#fff', touchAction: 'none', cursor: disabled ? 'not-allowed' : 'crosshair', width: '100%', maxWidth: 460, display: 'block' },
+      onMouseDown: disabled ? undefined : start, onMouseMove: disabled ? undefined : move, onMouseUp: end, onMouseLeave: end,
+      onTouchStart: disabled ? undefined : start, onTouchMove: disabled ? undefined : move, onTouchEnd: end,
+    }),
+    React.createElement('div', { className: 'flex gap2 mt2' },
+      React.createElement('button', { type: 'button', className: 'btn bs btn-sm', disabled: disabled, onClick: limpiar }, '✕ Borrar'),
+      React.createElement('button', { type: 'button', className: 'btn bp btn-sm', disabled: disabled || vacio, onClick: guardar }, '✓ Guardar firma')));
+}
+
+function MiFirmaModal({ open, onClose, toast, firmaActual, onGuardada }) {
+  const [loading, setLoading] = React.useState(false);
+
+  async function guardarFirma(dataUrl) {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/firma', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firmaUrl: dataUrl }) });
+      if (!res.ok) throw new Error('No se pudo guardar la firma');
+      const user = await res.json();
+      toast('Firma guardada', 'success');
+      onGuardada(user.firma_url);
+      onClose();
+    } catch (e) {
+      toast(e.message, 'danger');
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function eliminarFirma() {
+    setLoading(true);
+    try {
+      await fetch('/api/auth/firma', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firmaUrl: null }) });
+      toast('Firma eliminada', 'warning');
+      onGuardada(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement(Modal, { open, onClose, title: 'Mi firma electrónica' },
+    React.createElement('div', { className: 'mb' },
+      React.createElement(Alert, { type: 'info' }, 'Se guarda contigo, no por sesión. Cuando apruebes, devuelvas o rechaces un contrato, esta firma queda asociada a esa acción en su historial.'),
+      firmaActual && React.createElement('div', { className: 'mb3' },
+        React.createElement('div', { className: 'if-label mb2' }, 'Firma actual'),
+        React.createElement('img', { src: firmaActual, style: { maxWidth: 300, border: '1px solid var(--border2)', borderRadius: 'var(--r-sm)', background: '#fff' } }),
+        React.createElement('div', null, React.createElement('button', { className: 'btn bd btn-sm mt2', disabled: loading, onClick: eliminarFirma }, 'Eliminar firma actual'))),
+      React.createElement('div', { className: 'if-label mb2' }, firmaActual ? 'Dibujar nueva firma' : 'Dibuja tu firma'),
+      React.createElement(FirmaCanvas, { onSave: guardarFirma, disabled: loading })));
+}
+function MiFirmaButton({ toast }) {
+  const [open, setOpen] = React.useState(false);
+  const [firma, setFirma] = React.useState(USUARIO.firma_url || null);
+  return React.createElement(React.Fragment, null,
+    React.createElement('button', { className: 'bi', title: 'Mi firma electrónica', onClick: () => setOpen(true) }, '✍️'),
+    React.createElement(MiFirmaModal, {
+      open, onClose: () => setOpen(false), toast, firmaActual: firma,
+      onGuardada: f => { USUARIO.firma_url = f; setFirma(f); },
+    }));
 }
 
 function CambiarPasswordModal({ open, onClose, toast }) {
@@ -23448,7 +23877,7 @@ function App() {
     className: "bi",
     title: "Panel principal",
     onClick: () => { setShowHome(true); setTopMod(null); }
-  }, "🏠"), /*#__PURE__*/React.createElement(CambiarPasswordButton, { toast }), /*#__PURE__*/React.createElement("button", {
+  }, "🏠"), /*#__PURE__*/React.createElement(MiFirmaButton, { toast }), /*#__PURE__*/React.createElement(CambiarPasswordButton, { toast }), /*#__PURE__*/React.createElement("button", {
     className: "bi",
     title: "Cerrar sesión",
     onClick: pigLogout

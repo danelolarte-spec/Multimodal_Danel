@@ -61,7 +61,7 @@ public/
 | Flota de Vehículos | `Vehiculos` | Vehículos y su documentación (SOAT, tecnomecánica, tarjeta de operación, etc.) |
 | Conductores | `Conductores` | Habilitación, documentos, seguridad social |
 | Gestión de Trámites | `GestionTramites` | Vinculaciones, desvinculaciones, operativos |
-| Extractos (FUEC) | `Extractos` | Formato Único de Extracto del Contrato (Resolución 6652/2019) — clientes, contratos con flujo de firma/aprobación, generación del FUEC con validaciones normativas, QR de verificación pública, duplicación e historial. Ya conectado 100% a la API real; ver `docs/BACKEND_DESIGN.md` §8. |
+| Extractos (FUEC) | `Extractos` | Formato Único de Extracto del Contrato (Resolución 6652/2019) — clientes, contratos con flujo de firma/aprobación, generación del FUEC seleccionando la ruta del tarifario del cliente, buscador con filtros (cliente, placa, N° FUEC, conductor, fechas), QR de verificación pública, duplicación e historial con firma electrónica del aprobador. Ya conectado 100% a la API real; ver `docs/BACKEND_DESIGN.md` §8 y §10. |
 | Infracciones VIGÍA | `Infracciones` | Control de comparendos/infracciones |
 | Cartera Afiliados | `Cartera` | Obligaciones y cobros a afiliados |
 | Pólizas y Siniestros | `Polizas` | Seguros, reclamaciones (`RAMOS_POLIZA`, `ESTADOS_RECLAMACION`) y flujos de siniestro configurables (`FlujosEditor`) |
@@ -72,7 +72,7 @@ public/
 | Validaciones Afiliados | `ValidacionesAfiliados` | Documentos/pagos enviados por afiliados (portal externo) |
 | Portal de Afiliación | `AutoGestion` | Autogestión pública para interesados en afiliarse (sin login) |
 | Solicitudes Recibidas | `AdminSolicitudes` | Bandeja interna de solicitudes de afiliación |
-| (Demo) Vista del Afiliado | `PortalAfiliado` | Simulación del portal visto por un afiliado |
+| (Demo) Vista del Afiliado | `PortalAfiliado` | Simulación del portal visto por un afiliado — salvo su pestaña "Extractos" (`PortalAfiliadoExtractos`), que sí es real: el afiliado carga un contrato de Grupo Específico con ruta por municipios de Colombia, Trámites lo aprueba, y genera extractos con las mismas reglas de mora que cualquier generación de afiliado. Ver `docs/BACKEND_DESIGN.md` §10. |
 | Configuraciones Avanzadas | `ConfiguracionesAvanzadas` | Ver abajo — diseñador de trámites y formatos |
 
 **Configuraciones Avanzadas** agrupa un mini "no-code builder" interno:
