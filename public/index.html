@@ -52,6 +52,13 @@ function MunicipioField({ label, depValue, munValue, onChange }) {
         municipios.map(m => React.createElement("option", { key: m, value: m }, m)))));
 }
 
+const NOMBRES_MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+// Lista "Mes Año" para todo el año dado (por defecto el actual), de Enero a Diciembre —
+// antes varios selectores solo ofrecían 3-4 meses fijos "quemados" en el código.
+function opcionesMesAnio(year) {
+  const y = year || new Date().getFullYear();
+  return NOMBRES_MESES.map(m => `${m} ${y}`);
+}
 
 function getTareasPendientes(usuario) {
   if (typeof _tareasStore === 'undefined') return [];
@@ -2473,6 +2480,24 @@ function syncConductorFields(id, fields) {
 function syncConductorDoc(id, tipo, doc) {
   fetch('/api/conductores/' + id + '/documentos/' + tipo, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) })
     .catch(function(e){ console.error('Error guardando documento del conductor', e); });
+}
+// Aplica una edición (datos o vehículo asignado) ya aprobada por Trámites: actualiza el store
+// local en memoria y persiste en el servidor vía syncConductorFields.
+function updateConductorStore(id, upd) {
+  if (!_conductoresStore) _conductoresStore = [];
+  _conductoresStore = _conductoresStore.map(function(c){ return c.id === id ? Object.assign({}, c, upd) : c; });
+  syncConductorFields(id, upd);
+}
+// Aplica un documento de conductor ya aprobado: doc = {ven, est, archivoUrl, archivoNombre}
+// (mismas claves que devuelve la API); se traduce a {vencimiento, estado, ...} para persistir.
+function updateConductorDocStore(id, tipo, doc) {
+  if (!_conductoresStore) _conductoresStore = [];
+  _conductoresStore = _conductoresStore.map(function(c) {
+    if (c.id !== id) return c;
+    var prev = (c.docs && c.docs[tipo]) || {};
+    return Object.assign({}, c, { docs: Object.assign({}, c.docs, { [tipo]: Object.assign({}, prev, doc) }) });
+  });
+  syncConductorDoc(id, tipo, { vencimiento: doc.ven, estado: doc.est, archivoUrl: doc.archivoUrl, archivoNombre: doc.archivoNombre });
 }
 function syncConductorSegSocial(id, entry) {
   fetch('/api/conductores/' + id + '/seg-social', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) })
@@ -6312,7 +6337,7 @@ function Conductores({
       ...ssIndForm,
       mes: e.target.value
     })
-  }, ['Julio 2026', 'Junio 2026', 'Mayo 2026', 'Abril 2026', 'Marzo 2026', 'Febrero 2026'].map(m => /*#__PURE__*/React.createElement("option", {
+  }, opcionesMesAnio().map(m => /*#__PURE__*/React.createElement("option", {
     key: m
   }, m)))), /*#__PURE__*/React.createElement("div", {
     className: "fg"
@@ -6374,7 +6399,7 @@ function Conductores({
     className: "fsel",
     value: mes,
     onChange: e => setMes(e.target.value)
-  }, ['Julio 2026', 'Junio 2026', 'Mayo 2026', 'Abril 2026', 'Marzo 2026'].map(m => /*#__PURE__*/React.createElement("option", {
+  }, opcionesMesAnio().map(m => /*#__PURE__*/React.createElement("option", {
     key: m
   }, m)))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -11837,15 +11862,27 @@ function PortalAfiliado({
     valor: '',
     archivo: null
   });
-  // Conductor por vehículo
-  const [conductorVeh, setConductorVeh] = useState({}); // vehiculoId → {nombre,cedula}
-  const [showCondForm, setShowCondForm] = useState(null); // vehiculoId
+  // Conductor por vehículo — la fuente de verdad es el store real de conductores
+  // (getConductores(), respaldado por /api/conductores), no un estado local aparte:
+  // así, en cuanto Trámites aprueba la asignación/edición/reasignación, el afiliado
+  // la ve reflejada (antes quedaba "atascado" en Sin conductor asignado).
+  const [conductores, setConductoresLocal] = useState(() => getConductores());
+  function refreshConductores() {
+    setConductoresLocal([...getConductores()]);
+  }
+  const [showCondForm, setShowCondForm] = useState(null); // {vehiculoId, conductorId|null} — null conductorId = nuevo
   const [condForm, setCondForm] = useState({
     nombre: '',
     cedula: '',
     telefono: '',
     licencia: ''
   });
+  const [showCondVehForm, setShowCondVehForm] = useState(null); // conductor a reasignar
+  const [condVehDestino, setCondVehDestino] = useState('');
+  const [verFicha, setVerFicha] = useState(null); // conductor a mostrar en la ficha
+  const [showCondDocForm, setShowCondDocForm] = useState(null); // {conductorId, tipo}
+  const [condDocFecha, setCondDocFecha] = useState('');
+  const [condDocArchivo, setCondDocArchivo] = useState(null);
   // Planillas SS/ARL
   const [planillas, setPlanillas] = useState(() => getPlanillas());
   const [showPlanillaForm, setShowPlanillaForm] = useState(null); // vehiculoId
@@ -11912,24 +11949,28 @@ function PortalAfiliado({
   }
   const misPagosTramitesPendientes = misTramitesConValor.filter(function(t){ return estadoEnvioPago(t.id,'tramite')==='PENDIENTE'; }).length
     + misCajaMenorPendiente.filter(function(c){ return estadoEnvioPago(c.id,'cajaMenor')==='PENDIENTE'; }).length;
-  function guardarConductor(vid) {
-    if (!condForm.nombre.trim()) {
-      toast('Ingresa el nombre del conductor', 'danger');
+  function guardarConductor() {
+    if (!condForm.nombre.trim() || !condForm.cedula.trim()) {
+      toast('Ingresa el nombre y la cédula del conductor', 'danger');
       return;
     }
+    const { vehiculoId, conductorId } = showCondForm;
+    const esEdicion = !!conductorId;
+    const condActual = esEdicion ? conductores.find(c => c.id === conductorId) : null;
     const cambio = {
       id: `cp${Date.now()}`,
-      vehiculoId: vid,
-      tipo: 'CONDUCTOR',
+      vehiculoId,
+      conductorId: conductorId || null,
+      tipo: esEdicion ? 'CONDUCTOR_EDITAR' : 'CONDUCTOR',
       campo: 'conductor',
-      campoLabel: 'Asignación de conductor',
+      campoLabel: esEdicion ? `Editar datos de conductor — ${condActual?.nombre || ''}` : 'Asignación de conductor',
       valorNuevo: {
         nombre: condForm.nombre,
         cedula: condForm.cedula,
         telefono: condForm.telefono,
         licencia: condForm.licencia
       },
-      valorAnterior: conductorVeh[vid] || null,
+      valorAnterior: condActual ? { nombre: condActual.nombre, cedula: condActual.cedula, telefono: condActual.telefono, licencia: condActual.licencia } : null,
       archivoUrl: null,
       archivoNombre: null,
       fechaEnvio: new Date().toISOString().split('T')[0],
@@ -11941,12 +11982,6 @@ function PortalAfiliado({
       nota: ''
     };
     addCambioPendiente(cambio);
-    setConductorVeh(p => ({
-      ...p,
-      [vid]: {
-        ...condForm
-      }
-    }));
     refresh();
     setShowCondForm(null);
     setCondForm({
@@ -11955,7 +11990,65 @@ function PortalAfiliado({
       telefono: '',
       licencia: ''
     });
-    toast('Conductor enviado a trámites para aprobación', 'success');
+    toast(esEdicion ? 'Edición enviada a trámites para aprobación' : 'Conductor enviado a trámites para aprobación', 'success');
+  }
+  function enviarCambioVehiculo() {
+    const cond = conductores.find(c => c.id === showCondVehForm);
+    if (!cond || !condVehDestino) return;
+    addCambioPendiente({
+      id: `cp${Date.now()}`,
+      vehiculoId: cond.vehiculo,
+      conductorId: cond.id,
+      tipo: 'CONDUCTOR_VEHICULO',
+      campo: 'vehiculo',
+      campoLabel: `Cambio de vehículo — ${cond.nombre}`,
+      valorNuevo: condVehDestino,
+      valorAnterior: cond.vehiculo,
+      archivoUrl: null,
+      archivoNombre: null,
+      fechaEnvio: new Date().toISOString().split('T')[0],
+      enviadoPor: AFILIADO_DEMO.nombre,
+      estado: 'PENDIENTE',
+      revisadoPor: null,
+      fechaRevision: null,
+      motivoRechazo: '',
+      nota: ''
+    });
+    refresh();
+    setShowCondVehForm(null);
+    setCondVehDestino('');
+    toast('Solicitud de cambio de vehículo enviada a trámites', 'success');
+  }
+  function enviarDocumentoConductor(cond, tipo) {
+    if (!condDocFecha && !condDocArchivo) {
+      toast('Adjunta un archivo o indica la fecha de vencimiento', 'danger');
+      return;
+    }
+    const archivoUrl = condDocArchivo ? URL.createObjectURL(condDocArchivo) : null;
+    addCambioPendiente({
+      id: `cp${Date.now()}`,
+      vehiculoId: cond.vehiculo,
+      conductorId: cond.id,
+      tipo: 'CONDUCTOR_DOC',
+      campo: tipo,
+      campoLabel: `Documento de conductor — ${DCOND[tipo]} (${cond.nombre})`,
+      valorNuevo: condDocFecha || null,
+      valorAnterior: cond.docs?.[tipo]?.ven || null,
+      archivoUrl,
+      archivoNombre: condDocArchivo?.name || null,
+      fechaEnvio: new Date().toISOString().split('T')[0],
+      enviadoPor: AFILIADO_DEMO.nombre,
+      estado: 'PENDIENTE',
+      revisadoPor: null,
+      fechaRevision: null,
+      motivoRechazo: '',
+      nota: ''
+    });
+    refresh();
+    setShowCondDocForm(null);
+    setCondDocFecha('');
+    setCondDocArchivo(null);
+    toast(`${DCOND[tipo]} enviado. El área de trámites lo revisará pronto.`, 'success');
   }
   function enviarPlanilla(vid) {
     if (!planillaForm.archivoSS) {
@@ -12202,7 +12295,13 @@ function PortalAfiliado({
         fontSize: 11,
         color: 'var(--t3)'
       }
-    }, "Modelo ", v.modelo, " · ", v.tipo))), /*#__PURE__*/React.createElement("div", {
+    }, "Modelo ", v.modelo, " · ", v.tipo),
+      (() => {
+        const condV = conductores.find(c => c.vehiculo === v.id && c.activo);
+        return React.createElement("div", { style: { fontSize: 11, color: 'var(--t3)', marginTop: 3 }, onClick: e => { if (condV) { e.stopPropagation(); setVerFicha(condV); } } },
+          "👤 ", condV ? React.createElement("span", { style: { color: 'var(--amber)', cursor: 'pointer' } }, condV.nombre) : "Sin conductor asignado");
+      })()
+    )), /*#__PURE__*/React.createElement("div", {
       className: "flex fic gap2"
     }, docsVenc > 0 && /*#__PURE__*/React.createElement("span", {
       className: "badge br"
@@ -12212,7 +12311,19 @@ function PortalAfiliado({
       className: "badge bg"
     }, "Al día"), /*#__PURE__*/React.createElement("span", {
       className: `badge ${v.cartera.saldo > 0 ? 'br' : 'bg'}`
-    }, v.cartera.saldo > 0 ? fmt(v.cartera.saldo) : 'Sin saldo'), /*#__PURE__*/React.createElement("button", {
+    }, v.cartera.saldo > 0 ? fmt(v.cartera.saldo) : 'Sin saldo'),
+    (() => {
+      const condV = conductores.find(c => c.vehiculo === v.id && c.activo);
+      const pendVehV = condV && cambios.find(c => c.conductorId === condV.id && c.tipo === 'CONDUCTOR_VEHICULO' && c.estado === 'PENDIENTE');
+      if (!condV || misVehiculos.length < 2) return null;
+      return pendVehV
+        ? React.createElement("span", { className: "badge by" }, "⏳ Cambio en revisión")
+        : React.createElement("button", {
+            className: "btn btn-sm bs",
+            onClick: () => { setShowCondVehForm(condV.id); setCondVehDestino(''); }
+          }, "🔁 Cambiar vehículo");
+    })(),
+    /*#__PURE__*/React.createElement("button", {
       className: "btn btn-sm bp",
       onClick: () => {
         setVehActivoId(v.id);
@@ -12346,60 +12457,44 @@ function PortalAfiliado({
       marginTop: 12
     }
   }, misVehiculos.map(v => {
-    const cond = conductorVeh[v.id];
+    const cond = conductores.find(c => c.vehiculo === v.id && c.activo);
     const pendCond = cambios.find(c => c.vehiculoId === v.id && c.tipo === 'CONDUCTOR' && c.estado === 'PENDIENTE');
-    return /*#__PURE__*/React.createElement("div", {
-      key: v.id,
-      className: "card"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "cb"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "flex fic fjb",
-      style: {
-        marginBottom: 10
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "flex fic gap2"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "placa"
-    }, v.placa), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        color: 'var(--t3)'
-      }
-    }, v.clase, " ", v.marca)), !pendCond && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-sm bp",
-      onClick: () => {
-        setShowCondForm(v.id);
-        setCondForm(cond || {
-          nombre: '',
-          cedula: '',
-          telefono: '',
-          licencia: ''
-        });
-      }
-    }, cond ? '✏ Actualizar conductor' : '+ Asignar conductor'), pendCond && /*#__PURE__*/React.createElement("span", {
-      className: "badge by"
-    }, "⏳ En revisión por Trámites")), cond ? /*#__PURE__*/React.createElement("div", {
-      className: "g2c",
-      style: {
-        fontSize: 13
-      }
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "fl"
-    }, "Nombre"), /*#__PURE__*/React.createElement("strong", null, cond.nombre)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "fl"
-    }, "Cédula"), cond.cedula), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "fl"
-    }, "Teléfono"), cond.telefono || '—'), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "fl"
-    }, "Categoría licencia"), cond.licencia || '—')) : /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12,
-        color: 'var(--t3)',
-        fontStyle: 'italic'
-      }
-    }, "Sin conductor asignado")));
+    const pendEdit = cond && cambios.find(c => c.conductorId === cond.id && c.tipo === 'CONDUCTOR_EDITAR' && c.estado === 'PENDIENTE');
+    const pendVeh = cond && cambios.find(c => c.conductorId === cond.id && c.tipo === 'CONDUCTOR_VEHICULO' && c.estado === 'PENDIENTE');
+    return React.createElement("div", { key: v.id, className: "card" },
+      React.createElement("div", { className: "cb" },
+        React.createElement("div", { className: "flex fic fjb", style: { marginBottom: 10 } },
+          React.createElement("div", { className: "flex fic gap2" },
+            React.createElement("span", { className: "placa" }, v.placa),
+            React.createElement("span", { style: { fontSize: 12, color: 'var(--t3)' } }, v.clase, " ", v.marca)),
+          React.createElement("div", { className: "flex fic gap2", style: { flexWrap: 'wrap' } },
+            !cond && !pendCond && React.createElement("button", {
+              className: "btn btn-sm bp",
+              onClick: () => { setShowCondForm({ vehiculoId: v.id, conductorId: null }); setCondForm({ nombre: '', cedula: '', telefono: '', licencia: '' }); }
+            }, "+ Asignar conductor"),
+            pendCond && React.createElement("span", { className: "badge by" }, "⏳ Conductor en revisión por Trámites"),
+            cond && !pendEdit && React.createElement("button", {
+              className: "btn btn-sm bs",
+              onClick: () => { setShowCondForm({ vehiculoId: v.id, conductorId: cond.id }); setCondForm({ nombre: cond.nombre, cedula: cond.cedula, telefono: cond.telefono || '', licencia: cond.licencia || '' }); }
+            }, "✏ Editar datos"),
+            pendEdit && React.createElement("span", { className: "badge by" }, "⏳ Edición en revisión"),
+            cond && misVehiculos.length > 1 && !pendVeh && React.createElement("button", {
+              className: "btn btn-sm bs",
+              onClick: () => { setShowCondVehForm(cond.id); setCondVehDestino(''); }
+            }, "🔁 Cambiar vehículo"),
+            pendVeh && React.createElement("span", { className: "badge by" }, "⏳ Cambio de vehículo en revisión"))),
+        cond
+          ? React.createElement("div", {
+              className: "g2c",
+              style: { fontSize: 13, cursor: 'pointer' },
+              onClick: () => setVerFicha(cond),
+              title: "Ver ficha del conductor"
+            },
+              React.createElement("div", null, React.createElement("div", { className: "fl" }, "Nombre"), React.createElement("strong", null, cond.nombre, " ", React.createElement("span", { style: { fontWeight: 400, fontSize: 11, color: 'var(--amber)' } }, "👁 Ver ficha"))),
+              React.createElement("div", null, React.createElement("div", { className: "fl" }, "Cédula"), cond.cedula),
+              React.createElement("div", null, React.createElement("div", { className: "fl" }, "Teléfono"), cond.telefono || '—'),
+              React.createElement("div", null, React.createElement("div", { className: "fl" }, "Categoría licencia"), cond.licencia || '—'))
+          : React.createElement("div", { style: { fontSize: 12, color: 'var(--t3)', fontStyle: 'italic' } }, "Sin conductor asignado")));
   }))), vista === 'planilla' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Alert, {
     type: "info"
   }, "Sube la planilla de Seguridad Social (EPS + Pensión) y la constancia de ARL de tu conductor. Trámites revisará y aprobará el cargue."), /*#__PURE__*/React.createElement("div", {
@@ -12709,7 +12804,7 @@ function PortalAfiliado({
       ...pagoForm,
       mes: e.target.value
     })
-  }, ['Mayo 2026', 'Junio 2026', 'Julio 2026'].map(m => /*#__PURE__*/React.createElement("option", {
+  }, opcionesMesAnio().map(m => /*#__PURE__*/React.createElement("option", {
     key: m
   }, m)))), /*#__PURE__*/React.createElement("div", {
     className: "fg"
@@ -12757,12 +12852,12 @@ function PortalAfiliado({
   }, "Enviar comprobante"))), /*#__PURE__*/React.createElement(Modal, {
     open: !!showCondForm,
     onClose: () => setShowCondForm(null),
-    title: showCondForm ? `👤 Conductor — ${misVehiculos.find(v => v.id === showCondForm)?.placa}` : ''
+    title: showCondForm ? `👤 ${showCondForm.conductorId ? 'Editar conductor' : 'Conductor'} — ${misVehiculos.find(v => v.id === showCondForm.vehiculoId)?.placa}` : ''
   }, /*#__PURE__*/React.createElement("div", {
     className: "mb"
   }, /*#__PURE__*/React.createElement(Alert, {
     type: "info"
-  }, "El conductor será enviado al área de Trámites para verificación de documentos y aprobación."), /*#__PURE__*/React.createElement("div", {
+  }, showCondForm && showCondForm.conductorId ? "Los cambios serán enviados al área de Trámites para revisión y aprobación." : "El conductor será enviado al área de Trámites para verificación de documentos y aprobación."), /*#__PURE__*/React.createElement("div", {
     className: "fg mt3"
   }, /*#__PURE__*/React.createElement("label", {
     className: "fl"
@@ -12821,9 +12916,73 @@ function PortalAfiliado({
     onClick: () => setShowCondForm(null)
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
     className: "btn bp",
-    onClick: () => guardarConductor(showCondForm),
+    onClick: () => guardarConductor(),
     disabled: !condForm.nombre || !condForm.cedula
-  }, "Enviar a Trámites"))), /*#__PURE__*/React.createElement(Modal, {
+  }, "Enviar a Trámites"))),
+    React.createElement(Modal, {
+      open: !!showCondVehForm, onClose: () => setShowCondVehForm(null),
+      title: showCondVehForm ? `🔁 Cambiar vehículo — ${conductores.find(c => c.id === showCondVehForm)?.nombre || ''}` : ''
+    },
+      React.createElement('div', { className: 'mb' },
+        React.createElement(Alert, { type: 'info' }, 'La reasignación será revisada y aprobada por el área de Trámites.'),
+        React.createElement('div', { className: 'fg mt3' },
+          React.createElement('label', { className: 'fl' }, 'Nuevo vehículo *'),
+          React.createElement('select', { className: 'fsel', value: condVehDestino, onChange: e => setCondVehDestino(e.target.value) },
+            React.createElement('option', { value: '' }, '— Seleccionar —'),
+            misVehiculos.filter(v => v.id !== conductores.find(c => c.id === showCondVehForm)?.vehiculo).map(v =>
+              React.createElement('option', { key: v.id, value: v.id }, `${v.placa} — ${v.clase} ${v.marca}`))))),
+      React.createElement('div', { className: 'mf' },
+        React.createElement('button', { className: 'btn bs', onClick: () => setShowCondVehForm(null) }, 'Cancelar'),
+        React.createElement('button', { className: 'btn bp', onClick: enviarCambioVehiculo, disabled: !condVehDestino }, 'Enviar a Trámites'))),
+    React.createElement(Modal, {
+      open: !!verFicha, onClose: () => setVerFicha(null), lg: true,
+      title: verFicha ? `👤 Ficha de conductor — ${verFicha.nombre}` : ''
+    },
+      verFicha && React.createElement('div', { className: 'mb' },
+        React.createElement('div', { className: 'g2c', style: { fontSize: 13, marginBottom: 14 } },
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Cédula'), verFicha.cedula),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Teléfono'), verFicha.telefono || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Categoría licencia'), verFicha.licencia || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Vehículo asignado'), misVehiculos.find(v => v.id === verFicha.vehiculo)?.placa || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'EPS'), verFicha.eps || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'ARL'), verFicha.arl || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Pensiones'), verFicha.pensiones || '—'),
+          React.createElement('div', null, React.createElement('div', { className: 'fl' }, 'Estado'), React.createElement('span', { className: `badge ${verFicha.activo ? 'bg' : 'bgr'}` }, verFicha.activo ? 'Activo' : 'Inactivo'))),
+        React.createElement('div', { className: 'ct', style: { fontSize: 12, marginBottom: 8 } }, 'Documentos'),
+        React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          Object.entries(DCOND).map(([tipo, label]) => {
+            const doc = (verFicha.docs && verFicha.docs[tipo]) || { est: 'PENDIENTE' };
+            const pendDoc = cambios.find(c => c.conductorId === verFicha.id && c.tipo === 'CONDUCTOR_DOC' && c.campo === tipo && c.estado === 'PENDIENTE');
+            return React.createElement('div', { key: tipo, className: 'flex fic fjb', style: { padding: '8px 0', borderBottom: '1px solid var(--border2)' } },
+              React.createElement('div', null,
+                React.createElement('div', { style: { fontSize: 13, fontWeight: 600 } }, label),
+                React.createElement('div', { style: { fontSize: 11, color: 'var(--t3)' } }, doc.ven ? `Vence ${fmtD(doc.ven)}` : 'Sin fecha registrada')),
+              React.createElement('div', { className: 'flex fic gap2' },
+                React.createElement(DocBadge, { est: doc.est }),
+                pendDoc ? React.createElement('span', { className: 'badge by' }, '⏳ En revisión')
+                  : React.createElement('button', { className: 'btn btn-sm bp', onClick: () => setShowCondDocForm({ conductorId: verFicha.id, tipo }) }, 'Actualizar documento')));
+          })))),
+    React.createElement(Modal, {
+      open: !!showCondDocForm, onClose: () => setShowCondDocForm(null),
+      title: showCondDocForm ? `Actualizar ${DCOND[showCondDocForm.tipo]} — ${conductores.find(c => c.id === showCondDocForm.conductorId)?.nombre || ''}` : ''
+    },
+      React.createElement('div', { className: 'mb' },
+        React.createElement(Alert, { type: 'info' }, 'El documento será enviado al área de Trámites para revisión.'),
+        React.createElement('div', { className: 'fg mt3' },
+          React.createElement('label', { className: 'fl' }, 'Fecha de vencimiento'),
+          React.createElement('input', { className: 'fi', type: 'date', value: condDocFecha, onChange: e => setCondDocFecha(e.target.value) })),
+        React.createElement('div', { className: 'fg' },
+          React.createElement('label', { className: 'fl' }, 'Archivo (PDF o foto)'),
+          React.createElement('label', { className: 'btn bs', style: { cursor: 'pointer', width: '100%', justifyContent: 'center', padding: 12 } },
+            condDocArchivo ? React.createElement(React.Fragment, null, '✓ ', condDocArchivo.name) : React.createElement(React.Fragment, null, '📎 Adjuntar archivo'),
+            React.createElement('input', { type: 'file', accept: 'application/pdf,image/*', style: { display: 'none' }, onChange: e => setCondDocArchivo(e.target.files[0]) })))),
+      React.createElement('div', { className: 'mf' },
+        React.createElement('button', { className: 'btn bs', onClick: () => setShowCondDocForm(null) }, 'Cancelar'),
+        React.createElement('button', {
+          className: 'btn bp',
+          onClick: () => enviarDocumentoConductor(conductores.find(c => c.id === showCondDocForm.conductorId), showCondDocForm.tipo)
+        }, 'Enviar para revisión'))),
+  /*#__PURE__*/React.createElement(Modal, {
     open: !!showPlanillaForm,
     onClose: () => setShowPlanillaForm(null),
     title: showPlanillaForm ? `🛡 Planilla SS/ARL — ${misVehiculos.find(v => v.id === showPlanillaForm)?.placa}` : ''
@@ -12842,7 +13001,7 @@ function PortalAfiliado({
       ...planillaForm,
       mes: e.target.value
     })
-  }, ['Julio 2026', 'Junio 2026', 'Mayo 2026', 'Abril 2026'].map(m => /*#__PURE__*/React.createElement("option", {
+  }, opcionesMesAnio().map(m => /*#__PURE__*/React.createElement("option", {
     key: m
   }, m)))), /*#__PURE__*/React.createElement("div", {
     className: "fg"
@@ -14496,13 +14655,34 @@ function ValidacionesAfiliados({
       };
       addConductorAprobado(nuevo);
     }
+    if (c.tipo === 'CONDUCTOR_EDITAR' && c.conductorId && c.valorNuevo) {
+      updateConductorStore(c.conductorId, {
+        nombre: c.valorNuevo.nombre, cedula: c.valorNuevo.cedula,
+        telefono: c.valorNuevo.telefono, licencia: c.valorNuevo.licencia,
+      });
+    }
+    if (c.tipo === 'CONDUCTOR_VEHICULO' && c.conductorId && c.valorNuevo) {
+      updateConductorStore(c.conductorId, { vehiculo: c.valorNuevo });
+    }
+    if (c.tipo === 'CONDUCTOR_DOC' && c.conductorId) {
+      const condOld = getConductores().find(x => x.id === c.conductorId);
+      const daOld = (condOld && condOld.docs && condOld.docs[c.campo]) || {};
+      const dDoc = c.valorNuevo ? daysUntil(c.valorNuevo) : null;
+      const estDoc = c.valorNuevo ? (dDoc < 0 ? 'VENCIDO' : dDoc <= 30 ? 'PROXIMO' : 'VIGENTE') : (daOld.est || 'PENDIENTE');
+      updateConductorDocStore(c.conductorId, c.campo, {
+        ven: c.valorNuevo || daOld.ven,
+        est: estDoc,
+        archivoUrl: c.archivoUrl || daOld.archivoUrl,
+        archivoNombre: c.archivoNombre || daOld.archivoNombre,
+      });
+    }
     updateCambioPendiente(c.id, {
       estado: 'APROBADO',
       revisadoPor: USUARIO.nombre,
       fechaRevision: fecha
     });
     refresh();
-    toast(`${c.campoLabel} aprobado — conductor agregado al módulo de Conductores`, 'success');
+    toast(`${c.campoLabel} aprobado${c.tipo === 'CONDUCTOR' ? ' — conductor agregado al módulo de Conductores' : ''}`, 'success');
     setSel(null);
   }
   function aprobarPlanilla(p) {
@@ -14566,12 +14746,18 @@ function ValidacionesAfiliados({
     DOCUMENTO: '📄',
     PAGO: '💳',
     CONDUCTOR: '👤',
+    CONDUCTOR_EDITAR: '✏',
+    CONDUCTOR_VEHICULO: '🔁',
+    CONDUCTOR_DOC: '📄',
     PLANILLA_SS: '🛡'
   };
   const TIPO_CLS = {
     DOCUMENTO: 'bb',
     PAGO: 'bg',
     CONDUCTOR: 'bamb',
+    CONDUCTOR_EDITAR: 'bamb',
+    CONDUCTOR_VEHICULO: 'bamb',
+    CONDUCTOR_DOC: 'bb',
     PLANILLA_SS: 'by'
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -14782,7 +14968,19 @@ function ValidacionesAfiliados({
         color: 'var(--t3)',
         marginLeft: 6
       }
-    }, "· ", c.valorNuevo.telefono)), c.valorNuevo && c.tipo !== 'CONDUCTOR' && typeof c.valorNuevo === 'string' && /*#__PURE__*/React.createElement("div", {
+    }, "· ", c.valorNuevo.telefono)),
+    c.tipo === 'CONDUCTOR_EDITAR' && c.valorNuevo && React.createElement("div", { style: { fontSize: 12, marginTop: 4, color: 'var(--t2)' } },
+      "✏ Nuevos datos: ", React.createElement("strong", null, c.valorNuevo.nombre), " · CC ", c.valorNuevo.cedula,
+      c.valorNuevo.licencia && React.createElement("span", { className: "badge bb", style: { fontSize: 9, marginLeft: 6 } }, "Lic. ", c.valorNuevo.licencia),
+      c.valorNuevo.telefono && React.createElement("span", { style: { color: 'var(--t3)', marginLeft: 6 } }, "· ", c.valorNuevo.telefono)),
+    c.tipo === 'CONDUCTOR_VEHICULO' && React.createElement("div", { style: { fontSize: 12, marginTop: 4, color: 'var(--t2)' } },
+      "🔁 Nuevo vehículo: ", React.createElement("strong", null, vehLocal.find(x => x.id === c.valorNuevo)?.placa || c.valorNuevo),
+      " (antes: ", vehLocal.find(x => x.id === c.valorAnterior)?.placa || c.valorAnterior || '—', ")"),
+    c.tipo === 'CONDUCTOR_DOC' && React.createElement("div", { style: { fontSize: 12, marginTop: 4, color: 'var(--t2)' } },
+      "📄 ", React.createElement("strong", null, DCOND[c.campo] || c.campo),
+      c.valorNuevo && React.createElement("span", null, " · Vence ", fmtD(c.valorNuevo)),
+      c.archivoUrl && React.createElement("a", { href: c.archivoUrl, target: "_blank", rel: "noreferrer", style: { marginLeft: 8, fontSize: 11, color: 'var(--amber)' } }, "📎 Ver archivo")),
+    c.valorNuevo && !['CONDUCTOR', 'CONDUCTOR_EDITAR', 'CONDUCTOR_VEHICULO', 'CONDUCTOR_DOC'].includes(c.tipo) && typeof c.valorNuevo === 'string' && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         marginTop: 2
