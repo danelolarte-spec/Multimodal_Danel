@@ -11617,38 +11617,28 @@ function NuevoContratoAfiliadoForm({ toast, onCreado }) {
   const [munDestino, setMunDestino] = React.useState('');
   const [fechaInicio, setFechaInicio] = React.useState('');
   const [fechaFin, setFechaFin] = React.useState('');
-  const [archivoFirmado, setArchivoFirmado] = React.useState(null);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
-
-  function leerArchivo(file) {
-    if (!file) { setArchivoFirmado(null); return; }
-    const reader = new FileReader();
-    reader.onloadend = () => setArchivoFirmado({ url: reader.result, nombre: file.name });
-    reader.readAsDataURL(file);
-  }
 
   async function crear() {
     setError('');
     if (!nombreCliente.trim()) { setError('Indica el nombre del grupo/cliente para el que prestas el servicio'); return; }
     if (!munOrigen || !munDestino) { setError('Selecciona el municipio de origen y de destino'); return; }
     if (!fechaInicio || !fechaFin) { setError('La vigencia del contrato es obligatoria'); return; }
-    if (!archivoFirmado) { setError('Debes cargar el contrato firmado'); return; }
     setLoading(true);
     try {
       const cliente = await extApiSend('POST', '/api/extractos/clientes', { nombre: nombreCliente, documento: documentoCliente });
       const contrato = await extApiSend('POST', '/api/extractos/contratos', {
-        clienteId: cliente.id, modalidad: 'GRUPO_ESPECIFICO', objeto,
-        fechaInicio, fechaFin, archivoFirmadoUrl: archivoFirmado.url,
+        clienteId: cliente.id, modalidad: 'GRUPO_ESPECIFICO', objeto, fechaInicio, fechaFin,
       });
       await extApiSend('PUT', `/api/extractos/clientes/${cliente.id}/tarifario`, {
         items: [{ tipoServicio, tipoVehiculo: 'Cualquiera', origen: munOrigen, destino: munDestino, valorServicio: 0, pagoAfiliado: 0 }],
       });
-      toast('Contrato enviado a validación del Área de Trámites', 'success');
+      toast('Contrato generado — ahora cárgalo firmado y solicita la autorización de Trámites', 'success');
       setNombreCliente(''); setDocumentoCliente(''); setObjeto('');
       setDepOrigen(''); setMunOrigen(''); setDepDestino(''); setMunDestino('');
-      setFechaInicio(''); setFechaFin(''); setArchivoFirmado(null);
-      onCreado();
+      setFechaInicio(''); setFechaFin('');
+      onCreado(contrato);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -11657,10 +11647,10 @@ function NuevoContratoAfiliadoForm({ toast, onCreado }) {
   }
 
   return React.createElement('div', { className: 'card' },
-    React.createElement('div', { className: 'ch' }, React.createElement('span', { className: 'ct' }, '📄 Cargar contrato de Grupo Específico')),
+    React.createElement('div', { className: 'ch' }, React.createElement('span', { className: 'ct' }, '📄 Generar contrato de Grupo Específico')),
     React.createElement('div', { className: 'cb' },
       error && React.createElement(Alert, { type: 'danger' }, error),
-      React.createElement(Alert, { type: 'info' }, 'Sube el contrato firmado del grupo específico de usuarios que vas a transportar. Quedará pendiente de aprobación del Área de Trámites — solo podrás generar extractos con este contrato cuando lo aprueben.'),
+      React.createElement(Alert, { type: 'info' }, 'Primero generas el contrato con los datos del servicio. Luego, desde "Mis contratos", lo imprimes (o usas el tuyo propio), lo firmas, lo cargas firmado y solicitas la autorización del Área de Trámites — solo con el contrato autorizado podrás generar extractos.'),
       React.createElement('div', { className: 'fg' },
         React.createElement('label', { className: 'fl' }, 'Nombre del grupo / cliente *'),
         React.createElement('input', { className: 'fi', value: nombreCliente, onChange: e => setNombreCliente(e.target.value) })),
@@ -11684,11 +11674,7 @@ function NuevoContratoAfiliadoForm({ toast, onCreado }) {
         React.createElement('div', { className: 'fg' },
           React.createElement('label', { className: 'fl' }, 'Fecha fin * (máx. 1 año)'),
           React.createElement('input', { className: 'fi', type: 'date', value: fechaFin, onChange: e => setFechaFin(e.target.value) }))),
-      React.createElement('div', { className: 'fg' },
-        React.createElement('label', { className: 'fl' }, 'Contrato firmado (PDF/imagen) *'),
-        React.createElement('input', { type: 'file', onChange: e => leerArchivo(e.target.files[0]) }),
-        archivoFirmado && React.createElement('div', { className: 'txs tmut mt2' }, `Cargado: ${archivoFirmado.nombre}`)),
-      React.createElement('button', { className: 'btn bp mt3', disabled: loading, onClick: crear }, loading ? 'Enviando…' : 'Enviar a validación de Trámites')));
+      React.createElement('button', { className: 'btn bp mt3', disabled: loading, onClick: crear }, loading ? 'Generando…' : '📄 Generar contrato')));
 }
 
 function GenerarExtractoAfiliadoModal({ contrato, open, onClose, toast, vehiculos, onGenerado }) {
@@ -11762,14 +11748,30 @@ function GenerarExtractoAfiliadoModal({ contrato, open, onClose, toast, vehiculo
       React.createElement('button', { className: 'btn bp', disabled: loading, onClick: generar }, loading ? 'Validando…' : '📄 Generar extracto')));
 }
 
-function MisContratosAfiliado({ toast, contratos, loading, vehiculosDisponibles, onRefrescar }) {
+function MisContratosAfiliado({ toast, contratos, loading, vehiculosDisponibles, onRefrescar, verInicial, onVistoInicial }) {
   const [generarPara, setGenerarPara] = React.useState(null);
+  const [verContrato, setVerContrato] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!verInicial) return;
+    const k = contratos.find(x => x.id === verInicial);
+    if (k) { setVerContrato(k); onVistoInicial(); }
+  }, [verInicial, contratos]);
+
+  // Mantiene el contrato abierto sincronizado con la lista (p.ej. después de cargar la firma,
+  // sin tener que cerrar y volver a abrir para ver el documento adjunto o el historial).
+  React.useEffect(() => {
+    if (!verContrato) return;
+    const fresh = contratos.find(x => x.id === verContrato.id);
+    if (fresh && fresh !== verContrato) setVerContrato(fresh);
+  }, [contratos]);
+
   if (loading) return React.createElement('div', { className: 'empty' }, React.createElement('p', null, 'Cargando…'));
   return React.createElement('div', null,
     contratos.length === 0
       ? React.createElement('div', { className: 'empty' },
           React.createElement('p', null, 'Sin contratos de grupo específico'),
-          React.createElement('p', { className: 'txs' }, 'Carga el primero en "+ Cargar contrato"'))
+          React.createElement('p', { className: 'txs' }, 'Genera el primero en "+ Generar contrato"'))
       : React.createElement('div', { className: 'card' }, React.createElement('div', { className: 'tw' }, React.createElement('table', null,
           React.createElement('thead', null, React.createElement('tr', null,
             React.createElement('th', null, 'Cliente'), React.createElement('th', null, 'Vigencia'), React.createElement('th', null, 'Estado'), React.createElement('th', null))),
@@ -11779,8 +11781,15 @@ function MisContratosAfiliado({ toast, contratos, loading, vehiculosDisponibles,
               React.createElement('td', null, k.cliente.nombre),
               React.createElement('td', { className: 'tsr' }, `${fmtD(k.fecha_inicio)} — ${fmtD(k.fecha_fin)}`),
               React.createElement('td', null, React.createElement('span', { className: `badge ${est.badge}` }, est.label)),
-              React.createElement('td', null, k.estado === 'APROBADO' && React.createElement('button', { className: 'btn btn-sm bp', onClick: () => setGenerarPara(k) }, '📄 Generar extracto')));
+              React.createElement('td', null,
+                React.createElement('div', { className: 'flex gap2' },
+                  React.createElement('button', { className: 'btn btn-sm bs', onClick: () => setVerContrato(k) }, 'Ver'),
+                  k.estado === 'APROBADO' && React.createElement('button', { className: 'btn btn-sm bp', onClick: () => setGenerarPara(k) }, '📄 Generar extracto'))));
           }))))),
+    React.createElement(ContratoDetalleModal, {
+      contrato: verContrato, open: !!verContrato, onClose: () => setVerContrato(null), toast,
+      onChanged: onRefrescar, soloAfiliado: true,
+    }),
     React.createElement(GenerarExtractoAfiliadoModal, {
       contrato: generarPara, open: !!generarPara, onClose: () => setGenerarPara(null), toast,
       vehiculos: vehiculosDisponibles, onGenerado: () => { setGenerarPara(null); onRefrescar(); },
@@ -11791,6 +11800,7 @@ function PortalAfiliadoExtractos({ toast, vehiculosDisponibles }) {
   const [tab, setTab] = React.useState('nuevo');
   const [contratos, setContratos] = React.useState([]);
   const [loadingContratos, setLoadingContratos] = React.useState(true);
+  const [verInicial, setVerInicial] = React.useState(null);
 
   function refresh() {
     return extApiGet('/api/extractos/contratos')
@@ -11801,11 +11811,14 @@ function PortalAfiliadoExtractos({ toast, vehiculosDisponibles }) {
 
   return React.createElement('div', null,
     React.createElement('div', { className: 'tabs' },
-      React.createElement('div', { className: `tab ${tab === 'nuevo' ? 'act' : ''}`, onClick: () => setTab('nuevo') }, '+ Cargar contrato'),
+      React.createElement('div', { className: `tab ${tab === 'nuevo' ? 'act' : ''}`, onClick: () => setTab('nuevo') }, '+ Generar contrato'),
       React.createElement('div', { className: `tab ${tab === 'mis' ? 'act' : ''}`, onClick: () => setTab('mis') }, `Mis contratos (${contratos.length})`)),
     tab === 'nuevo'
-      ? React.createElement(NuevoContratoAfiliadoForm, { toast, onCreado: () => { refresh(); setTab('mis'); } })
-      : React.createElement(MisContratosAfiliado, { toast, contratos, loading: loadingContratos, vehiculosDisponibles, onRefrescar: refresh }));
+      ? React.createElement(NuevoContratoAfiliadoForm, { toast, onCreado: contrato => { refresh(); setVerInicial(contrato.id); setTab('mis'); } })
+      : React.createElement(MisContratosAfiliado, {
+          toast, contratos, loading: loadingContratos, vehiculosDisponibles, onRefrescar: refresh,
+          verInicial, onVistoInicial: () => setVerInicial(null),
+        }));
 }
 
 function PortalAfiliado({
@@ -17609,7 +17622,7 @@ function GenerarContratoDocModal({ contrato, open, onClose, toast }) {
   );
 }
 
-function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
+function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged, soloAfiliado }) {
   const [motivo, setMotivo] = React.useState('');
   const [archivoUrl, setArchivoUrl] = React.useState('');
   const [showGenerarDoc, setShowGenerarDoc] = React.useState(false);
@@ -17692,22 +17705,28 @@ function ContratoDetalleModal({ contrato, open, onClose, toast, onChanged }) {
             rc('input', { type: 'file', onChange: e => subirFirma(e.target.files[0]) })),
 
       contrato.estado === 'PENDIENTE_FIRMA' && rc('div', { className: 'mt3' },
-        rc('button', { className: 'btn bp btn-sm', onClick: () => cambiarEstado('PENDIENTE_VALIDACION') }, 'Enviar a validación de Trámites')),
+        contrato.archivo_firmado_url
+          ? rc('button', { className: 'btn bp btn-sm', onClick: () => cambiarEstado('PENDIENTE_VALIDACION') }, 'Enviar a validación de Trámites')
+          : rc('div', { className: 'txs tmut' }, 'Carga el contrato firmado para poder enviarlo a validación de Trámites')),
 
-      contrato.estado === 'PENDIENTE_VALIDACION' && rc('div', { className: 'mt3' },
-        rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Motivo (si se devuelve o rechaza)'),
-          rc('textarea', { className: 'fta', value: motivo, onChange: e => setMotivo(e.target.value) })),
-        rc('div', { className: 'flex gap2' },
-          rc('button', { className: 'btn bsu btn-sm', onClick: () => cambiarEstado('APROBADO') }, '✓ Aprobar'),
-          rc('button', { className: 'btn bs btn-sm', onClick: () => cambiarEstado('DEVUELTO', { motivoDevolucion: motivo }) }, '↩ Devolver'),
-          rc('button', { className: 'btn bd btn-sm', onClick: () => cambiarEstado('RECHAZADO', { motivoDevolucion: motivo }) }, '✕ Rechazar'),
-        )
+      contrato.estado === 'PENDIENTE_VALIDACION' && (
+        soloAfiliado
+          ? rc(Alert, { type: 'info' }, 'Tu solicitud de autorización ya está en manos del Área de Trámites — cuando la revisen, este contrato quedará aprobado o te dirán qué falta corregir.')
+          : rc('div', { className: 'mt3' },
+              rc('div', { className: 'fg' }, rc('label', { className: 'fl' }, 'Motivo (si se devuelve o rechaza)'),
+                rc('textarea', { className: 'fta', value: motivo, onChange: e => setMotivo(e.target.value) })),
+              rc('div', { className: 'flex gap2' },
+                rc('button', { className: 'btn bsu btn-sm', onClick: () => cambiarEstado('APROBADO') }, '✓ Aprobar'),
+                rc('button', { className: 'btn bs btn-sm', onClick: () => cambiarEstado('DEVUELTO', { motivoDevolucion: motivo }) }, '↩ Devolver'),
+                rc('button', { className: 'btn bd btn-sm', onClick: () => cambiarEstado('RECHAZADO', { motivoDevolucion: motivo }) }, '✕ Rechazar'),
+              )
+            )
       ),
       contrato.motivo_devolucion && rc(Alert, { type: 'warn' }, `Motivo: ${contrato.motivo_devolucion}`),
       rc('div', { className: 'mt3' },
         rc('div', { className: 'flex fjb', style: { alignItems: 'center', marginBottom: 8 } },
           rc('div', { className: 'ct', style: { fontSize: 12 } }, 'Tarifario del cliente'),
-          !editandoTarifario && rc('button', { className: 'btn bs btn-sm', onClick: iniciarEdicionTarifario }, '✎ Editar tarifario')
+          !editandoTarifario && !soloAfiliado && rc('button', { className: 'btn bs btn-sm', onClick: iniciarEdicionTarifario }, '✎ Editar tarifario')
         ),
         editandoTarifario
           ? rc(React.Fragment, null,

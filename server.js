@@ -922,6 +922,10 @@ app.put('/api/extractos/contratos/:id', requireRole('admin', 'tramites', 'operac
     if (req.body.estado) {
       const validas = ['PENDIENTE_FIRMA', 'PENDIENTE_VALIDACION', 'APROBADO', 'DEVUELTO', 'RECHAZADO'];
       if (!validas.includes(req.body.estado)) throw Object.assign(new Error('Estado inválido'), { status: 400 });
+      if (req.body.estado === 'PENDIENTE_VALIDACION' && contrato.estado === 'PENDIENTE_FIRMA'
+        && !(req.body.archivo_firmado_url || contrato.archivo_firmado_url)) {
+        throw Object.assign(new Error('Debes cargar el contrato firmado antes de solicitar la validación de Trámites'), { status: 400 });
+      }
       const validadoPor = ['APROBADO', 'DEVUELTO', 'RECHAZADO'].includes(req.body.estado) ? usuario : contrato.validado_por;
       db.prepare('UPDATE extracto_contratos SET estado=?, motivo_devolucion=?, validado_por=? WHERE id=?')
         .run(req.body.estado, req.body.motivoDevolucion || null, validadoPor, req.params.id);
