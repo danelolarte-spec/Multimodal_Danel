@@ -306,3 +306,39 @@ El módulo "Tablero" de Operaciones (`OperacionesApp`, entrada de menú `operaci
 - **Crear desde el calendario**: clic en una celda vacía abre `ServicioFormModal` precargado con `{fecha, hora}` de esa celda (en Mes, solo `fecha`). Esto requirió dos ajustes puntuales y seguros en `ServicioFormModal` (usado también por la lista de Servicios, sin cambio de comportamiento ahí): el estado inicial del formulario ahora siempre parte de un único objeto `SERVICIO_FORM_DEFAULT` y le superpone `servicio` (antes, en modo edición, se perdían los defaults de los campos no incluidos en `servicio`); y el título usa `servicio && servicio.id` en vez de solo `servicio` para distinguir "nuevo precargado" (sin `id`) de "editar" (con `id`).
 - **Editar/cancelar/liquidar/generar extracto** desde cualquier evento: cada chip (`TableroEvento`) trae el mismo `AccionesMenu` que la lista de Servicios, con la misma lógica de guardado (mock local vs. `/api/servicios` real según si el contrato tiene `extracto_cliente_id`, igual que en `Servicios`) — duplicada intencionalmente en vez de extraída a un hook compartido, para no arriesgar el comportamiento ya probado de la lista.
 - **Bug de propagación de clics corregido durante las pruebas**: el chip del evento (`TableroEvento`) es un contenedor flex con dos hijos (etiqueta y menú de acciones), cada uno con su propio `stopPropagation`; un clic que cayera justo en el borde/`gap` del contenedor —fuera de ambos hijos— no lo detenía y burbujeaba hasta la celda del calendario, abriendo "Nuevo Servicio" por accidente. Se agregó `stopPropagation` también en el contenedor raíz del chip.
+
+## 13. Secuencia de estados del servicio, detalle completo y datos de demostración de septiembre
+
+### 13.1 Nueva secuencia de estados
+
+El estado de un servicio (`servicios.estado`, columna de texto libre — sin `CHECK` en SQLite, se valida solo en el frontend) pasó de 6 valores (`Pendiente, Asignado, En Curso, Finalizado, Cancelado, Liquidado`) a una secuencia operativa más granular, definida una sola vez en `public/index.html`:
+
+```js
+const ESTADOS_SERVICIO_SECUENCIA = ['Creado', 'Asignado', 'Aceptado', 'En Ruta', 'En Sitio', 'Realizando', 'Finalizado', 'Liquidado', 'Liquidado Confirmado'];
+const ESTADOS_SERVICIO_TODOS = [...ESTADOS_SERVICIO_SECUENCIA, 'Cancelado'];
+const SIGUIENTE_ESTADO_SIMPLE = { 'Creado': 'Asignado', 'Asignado': 'Aceptado', 'Aceptado': 'En Ruta', 'En Ruta': 'En Sitio', 'En Sitio': 'Realizando', 'Realizando': 'Finalizado' };
+```
+
+`Cancelado` sigue siendo un estado de excepción aparte, no un paso más de la secuencia (puede ocurrir desde casi cualquier punto). Estas tres constantes son la única fuente de verdad — reemplazaron los arreglos `['Pendiente', 'Asignado', ...]` que antes estaban repetidos y "quemados" en cuatro lugares distintos (filtros de `Servicios`, filtros del Tablero, el `<select>` de estado de `ServicioFormModal`, y `ESTADOS_ORDEN` de `Producción`).
+
+`SIGUIENTE_ESTADO_SIMPLE` cubre solo los pasos que son un cambio de estado sin datos que capturar. Los otros dos pasos tienen su propio flujo:
+- **Finalizado → Liquidado**: pasa por `LiquidarServicioModal` (tarifa confirmada, valor a pagar, a quién pagar, novedades) — no es un salto de un clic.
+- **Liquidado → Liquidado Confirmado**: un botón dedicado, "✓ Confirmar liquidación", sin modal.
+
+`AccionesMenu` ahora recibe un único prop `estado` (en vez de los booleanos `cancelado`/`liquidado` que tenía antes) y deriva todo internamente: si hay un `SIGUIENTE_ESTADO_SIMPLE[estado]` muestra "▶ Marcar «X»"; si `estado === 'Liquidado'` muestra "✓ Confirmar liquidación"; "Cancelar servicio" se oculta una vez el servicio ya está liquidado (antes solo se ocultaba si ya estaba cancelado); "Liquidar servicio" solo aparece cuando `estado === 'Finalizado'` (antes aparecía para cualquier estado no cancelado, lo que permitía liquidar un servicio recién creado saltándose toda la secuencia). Los dos lugares que renderizan `AccionesMenu` (la lista de `Servicios` y los chips del Tablero, `TableroEvento`) ganaron los handlers `handleAvanzarEstado`/`handleConfirmarLiquidacion`, con la misma lógica mock-vs-`/api/servicios` real que ya tenían `handleCancelar`/`handleLiquidar` (duplicada en ambos componentes a propósito, ver §12).
+
+Colores: `ESTADO_SVC_BADGE` (clases CSS `.badge`, para tablas) se remapeó a los 10 estados reutilizando las 7 clases de badge que existen (`bg/br/by/bb/bgr/bdk/bamb` — no hay más definidas en el CSS, así que algunos estados adyacentes comparten clase, p.ej. `Asignado`/`Aceptado` en azul o `Liquidado`/`Liquidado Confirmado` en oscuro; el texto de la etiqueta sigue distinguiéndolos). `TABLERO_ESTADO_COLOR` (colores inline del calendario, sin esa limitación) tiene los 10 colores completamente distintos.
+
+Los ~458 servicios de ejemplo preexistentes (`servicios0`) se migraron a la nueva nomenclatura: `Pendiente → Creado`, `En Curso → Realizando` (los demás nombres no cambiaron).
+
+### 13.2 Detalle completo del servicio (`VerServicioModal`)
+
+Antes solo mostraba contrato/fecha-hora/origen/destino/vehículo/conductor/pax/valor/observaciones. Ahora:
+
+- **Ruta**: sección propia con origen, destino y, si el cliente tiene un campo personalizado de tipo `paradas` (ver §9, `DisenarFormularioModal`/`ParadasField`) y el servicio tiene datos ahí, la lista numerada de paradas. Sigue mostrando el enlace a Google Maps (`RutaMapaLink`) cuando hay geocoordenadas.
+- **Valor a pagar al proveedor**: solo para servicios de un cliente de Comercial (`contrato.extracto_cliente_id`). El servicio guarda el valor cobrado al cliente (`s.valor`) pero no lo que se le paga al afiliado/proveedor — eso vive en el tarifario del cliente (`tarifario_items.pago_afiliado`, ver §9). Al abrir el modal, un `useEffect` pide `/api/extractos/clientes/:id/tarifario` y busca la fila cuyo producto/origen/destino coincide con el servicio (la misma que se usó para crearlo) para mostrar ese valor. Para contratos mock (no Comercial) esta fila no se muestra — ese modelo de datos no tiene el concepto de "pago a proveedor" separado.
+- **Campos personalizados del cliente**: cualquier otro campo (`contrato.campos`, distinto de `paradas`) que el servicio tenga respondido se lista igual que en el formulario de edición.
+
+### 13.3 Datos de demostración: servicios del 1 al 20 de septiembre de 2026
+
+`generarServiciosDemoSeptiembre()` (junto a `getServiciosStore()`) genera, completamente en el navegador (no se guarda en el servidor — es puramente para poblar la demo), entre 50 y 70 servicios ficticios por cada día del 1 al 20 de septiembre de 2026, con hora repartida entre las 05:00 y las 22:00 (igual rango que la grilla del Tablero). Usa los 4 contratos de ejemplo (`k001`-`k004`) con sus productos/campos reales, vehículos `v001`-`v005` y conductores `c001`-`c003` (los mismos que siembra `database.js`), y reparte los 10 estados con una distribución ponderada (más peso en `Creado`/`Asignado`/`Finalizado`/`Liquidado`, menos en `Cancelado`). Para el contrato del Aeropuerto (`k004`), ~1 de cada 3 servicios recibe 1-3 paradas falsas en su campo `Paradas del recorrido`, para poder ver esa sección del detalle sin tener que crear un servicio a mano. Los IDs usan el prefijo `sd` (`sd0001`, `sd0002`, ...) para no chocar con los `s001`-`s458` del set de ejemplo original ni con los que genera `addServicioStore` al crear servicios nuevos desde la UI.
