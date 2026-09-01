@@ -20,10 +20,9 @@ Ver [`docs/DEPLOY.md`](docs/DEPLOY.md) — despliegue en Render con disco persis
 
 ## Stack actual
 
-- **Frontend**: React 18 (UMD) + XLSX (SheetJS), servidos como archivos locales desde `public/vendor/` (no CDN — ver más abajo) y montados con `React.createElement` — sin JSX, sin bundler, sin build step. Todo vive en `public/index.html` (~21.8k líneas).
+- **Frontend**: React 18 (UMD) + XLSX (SheetJS), servidos como archivos locales desde `public/vendor/` (no CDN — ver más abajo) y montados con `React.createElement` — sin JSX, sin bundler, sin build step. Todo vive en `public/index.html` (~23.8k líneas).
 - **Librerías externas**:
   - `react` / `react-dom` 18, `xlsx` y `qrcode` — vendorizadas en `public/vendor/` (antes cargaban desde unpkg/cdnjs; se movieron localmente para no depender de CDNs externos en producción). `qrcode` se compiló a un bundle único con `esbuild` ya que no publica un build de navegador listo para usar.
-  - `Leaflet` — se sigue inyectando dinámicamente por CDN solo al entrar al tablero de despacho (mapa de rutas); no forma parte del flujo ya conectado.
   - `Google Maps JavaScript API` — con **API key placeholder** (`TU_API_KEY_DE_GOOGLE_MAPS`), ver sección de integraciones pendientes.
   - Google Fonts (Space Grotesk, Inter, JetBrains Mono) — por CDN, con fallback a fuentes del sistema si no cargan.
 - **Backend**: Node.js + Express + SQLite (`better-sqlite3`) + sesiones (`express-session`/`bcryptjs`). API REST real con autenticación por rol. Ver diseño completo y catálogo de endpoints en [`docs/BACKEND_DESIGN.md`](docs/BACKEND_DESIGN.md).
@@ -84,13 +83,13 @@ public/
 
 | Sección | Componente | Descripción |
 |---|---|---|
-| Tablero | `OperacionesTablero` → `EcservisEngine` | Despacho en tiempo real sobre mapa (Leaflet), motor cargado dinámicamente (ver abajo) |
+| Tablero | `OperacionesTablero` | Calendario tipo Google Calendar (día/semana/mes) — cada evento es un servicio, ver abajo |
 | Servicios | `Servicios` | Programación diaria de viajes/servicios |
 | Contratos | `Contratos` | Contratos y clientes, campos de servicio |
 | Producción | `Produccion` | Indicadores de rentabilidad operativa |
 | Liquidación | `LiquidacionServicios` | Relación de servicios ejecutados para facturar al cliente |
 
-**`EcservisEngine`** (~línea 20831) es el punto más "vivo" del prototipo: inyecta su propio CSS/HTML (`ECW_CSS`, `ECW_BODY_HTML`) y ejecuta un script de motor (`ECSERVIS_ENGINE_SRC`) vía `new Function(...)` una vez Leaflet está cargado. Es el candidato natural para conectarse a un backend de despacho/tracking real (asignación de vehículos, GPS, etc.).
+**`OperacionesTablero`** es un calendario de servicios al estilo Google Calendar: vistas de Día/Semana/Mes con navegación (Hoy/‹/›), filtros por estado/cliente/conductor/vehículo, coloreado de eventos configurable (por estado, cliente o conductor) y creación de un servicio con un clic en una celda vacía (precarga fecha/hora). Reutiliza los mismos modales y acciones que la lista de "Servicios" (`ServicioFormModal`, `VerServicioModal`, `LiquidarServicioModal`, `AccionesMenu`), así que crear/editar/cancelar/liquidar/generar extracto es idéntico desde ambas vistas. Reemplazó al antiguo motor de despacho `EcservisEngine` (un bloque de HTML/CSS/JS plano de ~185.000 caracteres, inyectado con `innerHTML` + `new Function(...)`, con su propio mapa Leaflet) que se eliminó por completo — ver `docs/BACKEND_DESIGN.md` §12.
 
 **Contratos y servicios "mock" vs. clientes reales de Comercial**: los contratos de ejemplo (`Universidad de Antioquia`, `EPM`, `ICBF Regional Antioquia`, `Aeropuerto José María Córdova`) siguen siendo datos locales del navegador (`ContratoFormModal`, tarifario propio `contrato.productos`, sin persistencia). Pero cuando Trámites aprueba un cliente dado de alta desde **Comercial**, el backend crea automáticamente un contrato real vinculado (`contratos.extracto_cliente_id`), que aparece en el selector de "Contrato" marcado "(Comercial)". Al elegir uno de estos, `ServicioFormModal` deja de usar el tarifario local y consulta directamente el tarifario real del cliente (`tarifario_items`, el mismo que administra Comercial — ver `docs/BACKEND_DESIGN.md` §9) y sus campos personalizados diseñados por Operaciones (ver abajo); el servicio se guarda de verdad vía `/api/servicios`, no en el store local. Para los contratos mock, sigue disponible "+ Generar nueva ruta / servicio no tarifado" para definir un tipo de servicio no contemplado y guardarlo en el tarifario local del contrato.
 
@@ -114,7 +113,7 @@ Reutiliza los clientes/contratos de Extractos (§8 de `docs/BACKEND_DESIGN.md`) 
 1. **Terminar de conectar el frontend a la API real** — Vehículos, Conductores, Cartera y Auth ya están conectados y probados (incluida persistencia entre sesiones/computadores distintos); falta repetir el patrón en el resto de módulos (orden recomendado en `docs/BACKEND_DESIGN.md` §5).
 2. **Carga de archivos real** — hoy `archivoUrl`/`comprobante` se guardan como `blob:` locales al navegador (no sobreviven a un recargo ni se comparten entre usuarios), aunque la API ya tiene las columnas listas (`archivo_url`, `archivo_nombre`, `comprobante_url`). Falta un endpoint de subida (`multipart/form-data` → disco o almacenamiento externo).
 3. **Google Maps** — la API key es un placeholder (`TU_API_KEY_DE_GOOGLE_MAPS`, línea 15 de `index.html`). Sin ella, `AddressField`/`ParadasField` funcionan como texto libre, sin autocompletar ni geolocalizar. Se recomienda mover la key a una variable de entorno inyectada por el servidor en vez de dejarla hardcodeada en el HTML.
-4. **Motor de despacho (`EcservisEngine`)** — actualmente autocontenido con datos de ejemplo; es el punto de integración para tracking GPS/asignación de vehículos en tiempo real, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
+4. **Tablero de Operaciones (calendario)** — hoy consume la misma mezcla de datos mock + `/api/servicios` real que la lista de Servicios (ver §12 de `docs/BACKEND_DESIGN.md`); es el punto de integración natural para tracking GPS/asignación de vehículos en tiempo real más adelante, sobre las tablas `servicios`/`vehiculos` ya definidas en el backend.
 5. **Exportación/importación Excel** — ya integrada vía SheetJS (`xlsx`), reutilizable para nuevas integraciones de reportes.
 6. **Módulos reservados** — el `HomeERP` todavía tiene varios "slots" vacíos como puntos de entrada para nuevos módulos de negocio (Comercial ya dejó de ser uno de ellos, ver §9 de `docs/BACKEND_DESIGN.md`).
 7. **Sesiones persistentes entre reinicios** — `express-session` usa almacenamiento en memoria; un redeploy cierra la sesión de todos los usuarios (los datos no se pierden, solo el login). Ver `docs/DEPLOY.md`.
