@@ -3057,11 +3057,35 @@ const servicios0 = [
   { id: "s456", fecha: "2026-08-20", hora: "06:30", contratoId: "k002", producto: "disponibilidad", vehiculoId: "v005", conductorId: "c018", origen: "EPM Zona Sur", destino: "El Poblado", origenGeo: null, destinoGeo: null, estado: "Asignado", valor: 190000, pax: 14, obs: "" },
   { id: "s457", fecha: "2026-08-20", hora: "12:00", contratoId: "k004", producto: "transfer_out", vehiculoId: null, conductorId: null, origen: "Aeropuerto JMC T1", destino: "Laureles", origenGeo: null, destinoGeo: null, estado: "Creado", valor: 70000, pax: 11, obs: "" },
   { id: "s458", fecha: "2026-08-20", hora: "18:00", contratoId: "k002", producto: "urbano", vehiculoId: "v004", conductorId: "c017", origen: "EPM Edificio Charta", destino: "El Poblado", origenGeo: null, destinoGeo: null, estado: "Asignado", valor: 48000, pax: 7, obs: "" }];
+// Coordenadas aproximadas (área metropolitana de Medellín) de los nombres de lugar que aparecen
+// en los servicios de ejemplo (los 458 originales y los generados en generarServiciosDemoSeptiembre)
+// — así todo servicio con un origen/destino conocido tiene ruta real en Google Maps (RutaMapaLink),
+// no solo texto libre. getServiciosStore() la usa para completar origenGeo/destinoGeo cuando faltan.
+const LOC_COORDS = {
+  'Medellín': [6.2442, -75.5812], 'Aeropuerto JMC': [6.1646, -75.4239], 'Aeropuerto JMC T1': [6.1646, -75.4239],
+  'Aeropuerto JMC T2': [6.1651, -75.4233], 'El Poblado': [6.2098, -75.5645], 'Laureles': [6.2318, -75.5899],
+  'Laureles, Cll 33': [6.2318, -75.5899], 'Envigado': [6.1752, -75.5928], 'Sabaneta': [6.1514, -75.6179],
+  'Itagüí': [6.1848, -75.5999], 'Itagüí Centro': [6.1848, -75.5999], 'Bello': [6.3371, -75.5564],
+  'Santa Fe de Antioquia': [6.5639, -75.8275], 'Guatapé': [6.2326, -75.1569], 'Carmen de Viboral': [6.0877, -75.3404],
+  'La Estrella Centro': [6.1590, -75.6440], 'Robledo': [6.2775, -75.5885], 'Belén': [6.2245, -75.6040],
+  'Ciudad Universitaria': [6.2670, -75.5680], 'Centro Zonal Sur': [6.1700, -75.5900],
+  'EPM Edificio Principal': [6.2437, -75.5749], 'EPM Edificio Charta': [6.2437, -75.5749], 'EPM Zona Sur': [6.2050, -75.5700],
+  'Hotel Dann Carlton': [6.2087, -75.5678], 'Hospital San Vicente': [6.2680, -75.5680],
+  'Hotel Intercontinental': [6.2020, -75.5710], 'Centro Comercial Santafé': [6.2090, -75.5660],
+  'Estadio Atanasio Girardot': [6.2530, -75.5900], 'Parque Lleras': [6.2093, -75.5661], 'Terminal del Norte': [6.2825, -75.5620],
+};
+function locGeo(nombre) {
+  const c = LOC_COORDS[nombre];
+  return c ? { lat: c[0], lng: c[1] } : null;
+}
+
 // ── Datos de demostración: servicios del 1 al 20 de septiembre de 2026 ──────────────────
 // Totalmente ficticios (no existen en el servidor), generados en el navegador para poblar el
 // Tablero de calendario con una carga operativa realista: mínimo 50 servicios por día,
 // repartidos durante todo el día (05:00–22:00), sin tener que teclear miles de filas a mano.
 // Los contratos/campos/productos son los mismos de la demo (k001-k004, ver contratos0 arriba).
+// Todos quedan con origen/destino/paradas georreferenciados (LOC_COORDS) para poder ver la ruta
+// real en Google Maps desde el detalle del servicio.
 function generarServiciosDemoSeptiembre() {
   const CONTRATOS_DEMO = [
     { id: 'k001', productos: ['urbano', 'transfer_in', 'circuito'],
@@ -3113,7 +3137,7 @@ function generarServiciosDemoSeptiembre() {
       Object.entries(k.campos).forEach(([campoId, opciones]) => { if (Math.random() < 0.6) campos[campoId] = pick(opciones); });
       if (k.id === 'k004' && Math.random() < 0.35) {
         const numParadas = 1 + Math.floor(Math.random() * 3);
-        campos['3'] = Array.from({ length: numParadas }, () => ({ texto: pick(PARADAS_DEMO), geo: null }));
+        campos['3'] = Array.from({ length: numParadas }, () => { const texto = pick(PARADAS_DEMO); return { texto, geo: locGeo(texto) }; });
       }
       out.push({
         id: `sd${String(n).padStart(4, '0')}`,
@@ -3121,7 +3145,7 @@ function generarServiciosDemoSeptiembre() {
         contratoId: k.id, producto,
         vehiculoId: sinAsignar ? null : pick(VEHICULOS_DEMO),
         conductorId: sinAsignar ? null : pick(CONDUCTORES_DEMO),
-        origen, destino, origenGeo: null, destinoGeo: null,
+        origen, destino, origenGeo: locGeo(origen), destinoGeo: locGeo(destino),
         estado, valor, pax: 1 + Math.floor(Math.random() * 30), obs: '',
         campos,
       });
@@ -3131,7 +3155,16 @@ function generarServiciosDemoSeptiembre() {
 }
 let _serviciosStore = null;
 function getServiciosStore() {
-  if (!_serviciosStore) _serviciosStore = servicios0.map(function (s) { return Object.assign({}, s); }).concat(generarServiciosDemoSeptiembre());
+  if (!_serviciosStore) {
+    _serviciosStore = servicios0.map(function (s) {
+      // Los 458 servicios de ejemplo originales no traían geocoordenadas — se completan aquí
+      // por nombre (LOC_COORDS) para que también tengan ruta real en Google Maps.
+      return Object.assign({}, s, {
+        origenGeo: s.origenGeo || locGeo(s.origen),
+        destinoGeo: s.destinoGeo || locGeo(s.destino),
+      });
+    }).concat(generarServiciosDemoSeptiembre());
+  }
   return _serviciosStore;
 }
 function updateServicio(id, upd) {
@@ -21021,7 +21054,7 @@ const ESTADOS_SERVICIO_TODOS = [...ESTADOS_SERVICIO_SECUENCIA, 'Cancelado'];
 // no es un salto simple) y Liquidado → Liquidado Confirmado tiene su propio botón dedicado
 // ("Confirmar liquidación", ver AccionesMenu) — ninguno de los dos está aquí a propósito.
 const SIGUIENTE_ESTADO_SIMPLE = {
-  'Creado': 'Asignado', 'Asignado': 'Aceptado', 'Aceptado': 'En Ruta',
+  'Asignado': 'Aceptado', 'Aceptado': 'En Ruta',
   'En Ruta': 'En Sitio', 'En Sitio': 'Realizando', 'Realizando': 'Finalizado',
 };
 const ESTADO_SVC_BADGE = {
@@ -21056,6 +21089,33 @@ const getTarifaProducto = (contrato, producto) => {
 
 function FG({ label, children }) {
   return h('div', { className: 'fg' }, h('label', { className: 'fl' }, label), children);
+}
+
+// Filtro de casillas múltiples (cliente/conductor/vehículo, etc.) — permite marcar más de una
+// opción a la vez, a diferencia de un <select> normal. `selected` vacío = "todos".
+function MultiSelectFiltro({ label, opciones, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const toggleId = id => onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+  const etiqueta = selected.length === 0 ? 'Todos'
+    : selected.length === 1 ? (opciones.find(o => o.id === selected[0])?.label || '1 seleccionado')
+    : `${selected.length} seleccionados`;
+  return h('div', { style: { position: 'relative', display: 'inline-block' } },
+    h('button', {
+      className: 'fsel', style: { textAlign: 'left', cursor: 'pointer', minWidth: 170, maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+      onClick: () => setOpen(o => !o)
+    }, `${label}: ${etiqueta}`),
+    open && h(React.Fragment, null,
+      h('div', { onClick: () => setOpen(false), style: { position: 'fixed', inset: 0, zIndex: 400 } }),
+      h('div', { className: 'card', style: { position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 401, minWidth: 230, maxHeight: 280, overflowY: 'auto', padding: 6, boxShadow: 'var(--sh-lg)' } },
+        selected.length > 0 && h('button', { className: 'btn btn-xs bs', style: { width: '100%', marginBottom: 4 }, onClick: () => onChange([]) }, '✕ Limpiar selección'),
+        opciones.length === 0 && h('div', { className: 'txs tmut', style: { padding: '4px 6px' } }, 'Sin opciones'),
+        opciones.map(o => h('label', { key: o.id, className: 'flex fic gap2', style: { padding: '5px 4px', cursor: 'pointer', fontSize: 12 } },
+          h('input', { type: 'checkbox', checked: selected.includes(o.id), onChange: () => toggleId(o.id) }),
+          o.label
+        ))
+      )
+    )
+  );
 }
 
 
@@ -21522,13 +21582,14 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     )
   );
 }
-function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, onAvanzarEstado, onConfirmarLiquidacion }) {
+function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, onAvanzarEstado, onConfirmarLiquidacion, onAsignar }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = React.useRef(null);
   const cancelado = estado === 'Cancelado';
   const liquidado = estado === 'Liquidado' || estado === 'Liquidado Confirmado';
-  const siguienteSimple = SIGUIENTE_ESTADO_SIMPLE[estado]; // paso "de un clic"; Finalizado→Liquidado no aplica (pasa por el modal de liquidar)
+  const siguienteSimple = SIGUIENTE_ESTADO_SIMPLE[estado]; // paso "de un clic"; Creado→Asignado y Finalizado→Liquidado no aplican (piden datos vía modal)
+  const puedeAsignar = estado === 'Creado';
   const puedeLiquidar = estado === 'Finalizado';
   const puedeConfirmarLiquidacion = estado === 'Liquidado';
   const toggle = () => {
@@ -21545,11 +21606,50 @@ function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGener
       h('div', { className: 'card', style: { position: 'fixed', top: pos.top, left: pos.left, zIndex: 401, minWidth: 200, padding: 4, boxShadow: 'var(--sh-lg)' } },
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onVer(); } }, '👁 Ver servicio'),
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onEditar(); } }, '✎ Editar servicio'),
+        puedeAsignar && onAsignar && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onAsignar(); } }, '▶ Asignar conductor y vehículo'),
         siguienteSimple && onAvanzarEstado && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onAvanzarEstado(); } }, `▶ Marcar «${siguienteSimple}»`),
         puedeConfirmarLiquidacion && onConfirmarLiquidacion && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onConfirmarLiquidacion(); } }, '✓ Confirmar liquidación'),
         onGenerarExtracto && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onGenerarExtracto(); } }, '📄 Generar extracto'),
         !cancelado && !liquidado && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2, color: 'var(--red)' }, onClick: () => { setOpen(false); onCancelar(); } }, '🚫 Cancelar servicio'),
         (puedeLiquidar || liquidado) && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none' }, onClick: () => { setOpen(false); onLiquidar(); } }, liquidado ? '🧾 Ver liquidación' : '🧾 Liquidar servicio')
+      )
+    )
+  );
+}
+
+function AsignarServicioModal({ servicio: s, vehiculos, conductores, onSave, onClose }) {
+  const [conductorId, setConductorId] = useState(s.conductorId || '');
+  const [vehiculoId, setVehiculoId] = useState(s.vehiculoId || '');
+  const [tocoVehiculo, setTocoVehiculo] = useState(false); // si el usuario ya editó la placa a mano, no la vuelvas a pisar
+
+  const elegirConductor = id => {
+    setConductorId(id);
+    if (tocoVehiculo) return;
+    const cond = conductores.find(c => c.id === id);
+    // Precarga la placa que el conductor tiene asignada por defecto — editable después.
+    if (cond && cond.vehiculo) setVehiculoId(cond.vehiculo);
+  };
+
+  const confirmar = () => {
+    if (!conductorId || !vehiculoId) { alert('Selecciona el conductor y el vehículo'); return; }
+    onSave({ conductorId, vehiculoId });
+  };
+
+  return h(Modal, { open: true, onClose, title: `Asignar — Servicio ${s.id}` },
+    h('div', { className: 'mb' },
+      h(Alert, { type: 'info' }, 'Al elegir el conductor se precarga la placa que tiene asignada por defecto — puedes cambiarla si el servicio lo requiere otro vehículo.'),
+      h(FG, { label: 'Conductor *' }, h('select', { className: 'fsel', value: conductorId, onChange: e => elegirConductor(e.target.value) },
+        h('option', { value: '' }, 'Seleccionar...'),
+        conductores.map(c => h('option', { key: c.id, value: c.id }, c.nombre)))),
+      h(FG, { label: 'Vehículo / Placa *' }, h('select', {
+        className: 'fsel', value: vehiculoId,
+        onChange: e => { setVehiculoId(e.target.value); setTocoVehiculo(true); }
+      },
+        h('option', { value: '' }, 'Seleccionar...'),
+        vehiculos.map(v => h('option', { key: v.id, value: v.id }, `${v.placa} — ${v.linea} (${v.capacidad} pas.)`)))),
+      h('div', { className: 'flex gap2 mt3' },
+        h('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
+        h('button', { className: 'btn bp', onClick: confirmar }, '✓ Asignar servicio')
       )
     )
   );
@@ -21672,11 +21772,14 @@ function Servicios({ toast }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [fContrato, setFContrato] = useState('todos');
+  const [fContratos, setFContratos] = useState([]); // [] = todos
+  const [fConductores, setFConductores] = useState([]);
+  const [fVehiculos, setFVehiculos] = useState([]);
   const [fDesde, setFDesde] = useState('');
   const [fHasta, setFHasta] = useState('');
   const [viewing, setViewing] = useState(null);
   const [liquidando, setLiquidando] = useState(null);
+  const [asignando, setAsignando] = useState(null);
   const [buscado, setBuscado] = useState(false);
   const [contratosReales, setContratosReales] = useState([]);
 
@@ -21715,13 +21818,15 @@ function Servicios({ toast }) {
     if (!txt.includes(search.toLowerCase())) return false;
     if (fOrden.trim() && !s.id.toLowerCase().includes(fOrden.trim().toLowerCase())) return false;
     if (fEstado !== 'Todos' && s.estado !== fEstado) return false;
-    if (fContrato !== 'todos' && s.contratoId !== fContrato) return false;
+    if (fContratos.length && !fContratos.includes(s.contratoId)) return false;
+    if (fConductores.length && !fConductores.includes(s.conductorId)) return false;
+    if (fVehiculos.length && !fVehiculos.includes(s.vehiculoId)) return false;
     if (fDesde && (!s.fecha || s.fecha < fDesde)) return false;
     if (fHasta && (!s.fecha || s.fecha > fHasta)) return false;
     return true;
   });
-  const clearFilters = () => { setSearch(''); setFOrden(''); setFEstado('Todos'); setFContrato('todos'); setFDesde(''); setFHasta(''); setBuscado(false); };
-  const filtrosActivos = fContrato !== 'todos' || fDesde || fHasta || fEstado !== 'Todos' || search || fOrden;
+  const clearFilters = () => { setSearch(''); setFOrden(''); setFEstado('Todos'); setFContratos([]); setFConductores([]); setFVehiculos([]); setFDesde(''); setFHasta(''); setBuscado(false); };
+  const filtrosActivos = fContratos.length > 0 || fConductores.length > 0 || fVehiculos.length > 0 || fDesde || fHasta || fEstado !== 'Todos' || search || fOrden;
   const buscar = () => setBuscado(true);
   const irAFechaDesdeCalendario = fecha => { setFDesde(fecha); setFHasta(fecha); setBuscado(true); setTab('lista'); };
 
@@ -21774,6 +21879,15 @@ function Servicios({ toast }) {
     if (siguiente) cambiarEstadoServicio(s, siguiente);
   };
   const handleConfirmarLiquidacion = s => cambiarEstadoServicio(s, 'Liquidado Confirmado');
+  const handleAsignar = async (s, datos) => {
+    const kk = contratos.find(x => x.id === s.contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) await extApiSend('PUT', `/api/servicios/${s.id}`, { estado: 'Asignado', vehiculo_id: datos.vehiculoId, conductor_id: datos.conductorId });
+      else updateServicio(s.id, { estado: 'Asignado', vehiculoId: datos.vehiculoId, conductorId: datos.conductorId });
+    } catch (e) { toast(e.message, 'danger'); return; }
+    refresh(); setAsignando(null);
+    toast('Servicio asignado', 'success');
+  };
   const handleGenerarExtracto = async s => {
     try {
       const extracto = await extApiSend('POST', `/api/servicios/${s.id}/generar-extracto`, {});
@@ -21814,10 +21928,9 @@ function Servicios({ toast }) {
           h('input', { type: 'date', className: 'fi', style: { maxWidth: 150 }, value: fDesde, onChange: e => setFDesde(e.target.value) }),
           h('span', { className: 'txs tmut fbold' }, 'Hasta'),
           h('input', { type: 'date', className: 'fi', style: { maxWidth: 150 }, value: fHasta, onChange: e => setFHasta(e.target.value) }),
-          h('select', { className: 'fsel', style: { maxWidth: 220 }, value: fContrato, onChange: e => setFContrato(e.target.value) },
-            h('option', { value: 'todos' }, 'Todos los contratos'),
-            contratos.map(k => h('option', { key: k.id, value: k.id }, k.nombre))
-          ),
+          h(MultiSelectFiltro, { label: 'Cliente', selected: fContratos, onChange: setFContratos, opciones: contratos.map(k => ({ id: k.id, label: k.nombre })) }),
+          h(MultiSelectFiltro, { label: 'Conductor', selected: fConductores, onChange: setFConductores, opciones: conductores.map(c => ({ id: c.id, label: c.nombre })) }),
+          h(MultiSelectFiltro, { label: 'Vehículo', selected: fVehiculos, onChange: setFVehiculos, opciones: vehiculos.map(v => ({ id: v.id, label: v.placa })) }),
           h('button', { className: 'btn btn-sm bp', onClick: buscar }, '🔍 Buscar'),
           filtrosActivos && h('button', { className: 'btn btn-sm bs', onClick: clearFilters }, '✕ Limpiar filtros')
         )
@@ -21863,6 +21976,7 @@ function Servicios({ toast }) {
                             onLiquidar: () => setLiquidando(s),
                             onAvanzarEstado: () => handleAvanzarEstado(s),
                             onConfirmarLiquidacion: () => handleConfirmarLiquidacion(s),
+                            onAsignar: () => setAsignando(s),
                             onGenerarExtracto: (k && k.extracto_cliente_id && !s.extracto_id) ? () => handleGenerarExtracto(s) : undefined
                           }))
                         );
@@ -21882,7 +21996,8 @@ function Servicios({ toast }) {
       conductor: getConductores().find(x => x.id === viewing.conductorId),
       onClose: () => setViewing(null)
     }),
-    liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast: toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) })
+    liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast: toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) }),
+    asignando && h(AsignarServicioModal, { servicio: asignando, vehiculos: vehiculos, conductores: conductores, onSave: datos => handleAsignar(asignando, datos), onClose: () => setAsignando(null) })
   );
 }
 
@@ -21986,6 +22101,7 @@ function TableroEvento({ s, contrato, conductor, color, detalle, acciones }) {
         onVer: acciones.onVer, onEditar: acciones.onEditar, onCancelar: acciones.onCancelar,
         onLiquidar: acciones.onLiquidar, onGenerarExtracto: acciones.onGenerarExtracto,
         onAvanzarEstado: acciones.onAvanzarEstado, onConfirmarLiquidacion: acciones.onConfirmarLiquidacion,
+        onAsignar: acciones.onAsignar,
       })
     )
   );
@@ -22083,14 +22199,15 @@ function OperacionesTablero({ toast }) {
   const [list, setList] = useState(getServiciosStore());
   const [contratosReales, setContratosReales] = useState([]);
   const [fEstado, setFEstado] = useState('Todos');
-  const [fContrato, setFContrato] = useState('todos');
-  const [fConductor, setFConductor] = useState('todos');
-  const [fVehiculo, setFVehiculo] = useState('todos');
+  const [fContratos, setFContratos] = useState([]); // [] = todos
+  const [fConductores, setFConductores] = useState([]);
+  const [fVehiculos, setFVehiculos] = useState([]);
   const [colorBy, setColorBy] = useState('estado');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [liquidando, setLiquidando] = useState(null);
+  const [asignando, setAsignando] = useState(null);
 
   const contratos = [...getContratosStore(), ...contratosReales];
   const vehiculos = habilitadosParaOperar();
@@ -22171,6 +22288,15 @@ function OperacionesTablero({ toast }) {
     if (siguiente) cambiarEstadoServicio(s, siguiente);
   };
   const handleConfirmarLiquidacion = s => cambiarEstadoServicio(s, 'Liquidado Confirmado');
+  const handleAsignar = async (s, datos) => {
+    const kk = contratos.find(x => x.id === s.contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) await extApiSend('PUT', `/api/servicios/${s.id}`, { estado: 'Asignado', vehiculo_id: datos.vehiculoId, conductor_id: datos.conductorId });
+      else updateServicio(s.id, { estado: 'Asignado', vehiculoId: datos.vehiculoId, conductorId: datos.conductorId });
+    } catch (e) { toast(e.message, 'danger'); return; }
+    refresh(); setAsignando(null);
+    toast('Servicio asignado', 'success');
+  };
   const accionesPara = s => {
     const kk = contratos.find(x => x.id === s.contratoId);
     return {
@@ -22180,19 +22306,20 @@ function OperacionesTablero({ toast }) {
       onLiquidar: () => setLiquidando(s),
       onAvanzarEstado: () => handleAvanzarEstado(s),
       onConfirmarLiquidacion: () => handleConfirmarLiquidacion(s),
+      onAsignar: () => setAsignando(s),
       onGenerarExtracto: (kk && kk.extracto_cliente_id && !s.extracto_id) ? () => handleGenerarExtracto(s) : undefined,
     };
   };
 
   const serviciosFiltrados = list.filter(s => {
     if (fEstado !== 'Todos' && s.estado !== fEstado) return false;
-    if (fContrato !== 'todos' && s.contratoId !== fContrato) return false;
-    if (fConductor !== 'todos' && s.conductorId !== fConductor) return false;
-    if (fVehiculo !== 'todos' && s.vehiculoId !== fVehiculo) return false;
+    if (fContratos.length && !fContratos.includes(s.contratoId)) return false;
+    if (fConductores.length && !fConductores.includes(s.conductorId)) return false;
+    if (fVehiculos.length && !fVehiculos.includes(s.vehiculoId)) return false;
     return true;
   });
-  const filtrosActivos = fEstado !== 'Todos' || fContrato !== 'todos' || fConductor !== 'todos' || fVehiculo !== 'todos';
-  const limpiarFiltros = () => { setFEstado('Todos'); setFContrato('todos'); setFConductor('todos'); setFVehiculo('todos'); };
+  const filtrosActivos = fEstado !== 'Todos' || fContratos.length > 0 || fConductores.length > 0 || fVehiculos.length > 0;
+  const limpiarFiltros = () => { setFEstado('Todos'); setFContratos([]); setFConductores([]); setFVehiculos([]); };
 
   const abrirNuevo = (fecha, hora) => { setEditing({ fecha, hora: hora || '' }); setModalOpen(true); };
   const irADia = fecha => { const [y, m, d] = fecha.split('-').map(Number); setFechaRef(new Date(y, m - 1, d)); setVista('dia'); };
@@ -22253,12 +22380,9 @@ function OperacionesTablero({ toast }) {
         }, f))
       ),
       h('div', { className: 'ch', style: { flexWrap: 'wrap', gap: 8 } },
-        h('select', { className: 'fsel', style: { maxWidth: 220 }, value: fContrato, onChange: e => setFContrato(e.target.value) },
-          h('option', { value: 'todos' }, 'Todos los clientes'), contratos.map(k => h('option', { key: k.id, value: k.id }, k.nombre))),
-        h('select', { className: 'fsel', style: { maxWidth: 200 }, value: fConductor, onChange: e => setFConductor(e.target.value) },
-          h('option', { value: 'todos' }, 'Todos los conductores'), conductores.map(c => h('option', { key: c.id, value: c.id }, c.nombre))),
-        h('select', { className: 'fsel', style: { maxWidth: 160 }, value: fVehiculo, onChange: e => setFVehiculo(e.target.value) },
-          h('option', { value: 'todos' }, 'Todos los vehículos'), vehiculos.map(v => h('option', { key: v.id, value: v.id }, v.placa))),
+        h(MultiSelectFiltro, { label: 'Cliente', selected: fContratos, onChange: setFContratos, opciones: contratos.map(k => ({ id: k.id, label: k.nombre })) }),
+        h(MultiSelectFiltro, { label: 'Conductor', selected: fConductores, onChange: setFConductores, opciones: conductores.map(c => ({ id: c.id, label: c.nombre })) }),
+        h(MultiSelectFiltro, { label: 'Vehículo', selected: fVehiculos, onChange: setFVehiculos, opciones: vehiculos.map(v => ({ id: v.id, label: v.placa })) }),
         filtrosActivos && h('button', { className: 'btn btn-sm bs', onClick: limpiarFiltros }, '✕ Limpiar filtros')
       ),
       h('div', { className: 'ch', style: { flexWrap: 'wrap', gap: 8 } },
@@ -22280,7 +22404,8 @@ function OperacionesTablero({ toast }) {
       conductor: getConductores().find(x => x.id === viewing.conductorId),
       onClose: () => setViewing(null)
     }),
-    liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) })
+    liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) }),
+    asignando && h(AsignarServicioModal, { servicio: asignando, vehiculos, conductores, onSave: datos => handleAsignar(asignando, datos), onClose: () => setAsignando(null) })
   );
 }
 
@@ -22292,22 +22417,22 @@ function Produccion() {
   const conductores = conductoresHabilitados();
 
   const hoy = new Date().toISOString().slice(0, 10);
-  const [fContrato, setFContrato] = useState('todos');
-  const [fVehiculo, setFVehiculo] = useState('todos');
-  const [fConductor, setFConductor] = useState('todos');
+  const [fContratos, setFContratos] = useState([]); // [] = todos
+  const [fVehiculos, setFVehiculos] = useState([]);
+  const [fConductores, setFConductores] = useState([]);
   const [fDesde, setFDesde] = useState('');
   const [fHasta, setFHasta] = useState('');
 
   const servicios = servicios0Full.filter(s => {
-    if (fContrato !== 'todos' && s.contratoId !== fContrato) return false;
-    if (fVehiculo !== 'todos' && s.vehiculoId !== fVehiculo) return false;
-    if (fConductor !== 'todos' && s.conductorId !== fConductor) return false;
+    if (fContratos.length && !fContratos.includes(s.contratoId)) return false;
+    if (fVehiculos.length && !fVehiculos.includes(s.vehiculoId)) return false;
+    if (fConductores.length && !fConductores.includes(s.conductorId)) return false;
     if (fDesde && (!s.fecha || s.fecha < fDesde)) return false;
     if (fHasta && (!s.fecha || s.fecha > fHasta)) return false;
     return true;
   });
-  const limpiarFiltros = () => { setFContrato('todos'); setFVehiculo('todos'); setFConductor('todos'); setFDesde(''); setFHasta(''); };
-  const filtrosActivos = fContrato !== 'todos' || fVehiculo !== 'todos' || fConductor !== 'todos' || fDesde || fHasta;
+  const limpiarFiltros = () => { setFContratos([]); setFVehiculos([]); setFConductores([]); setFDesde(''); setFHasta(''); };
+  const filtrosActivos = fContratos.length > 0 || fVehiculos.length > 0 || fConductores.length > 0 || fDesde || fHasta;
 
   const total = servicios.reduce((s, x) => s + (x.valor || 0), 0);
   const avg = servicios.length ? Math.round(total / servicios.length) : 0;
@@ -22363,9 +22488,9 @@ function Produccion() {
       h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Filtros'), filtrosActivos && h('button', { className: 'btn btn-sm bs', onClick: limpiarFiltros }, '✕ Limpiar filtros')),
       h('div', { className: 'cb' },
         h('div', { className: 'fg3' },
-          h(FG, { label: 'Contrato' }, h('select', { className: 'fsel', value: fContrato, onChange: e => setFContrato(e.target.value) }, h('option', { value: 'todos' }, 'Todos los contratos'), contratos.map(k => h('option', { key: k.id, value: k.id }, k.nombre)))),
-          h(FG, { label: 'Vehículo / Placa' }, h('select', { className: 'fsel', value: fVehiculo, onChange: e => setFVehiculo(e.target.value) }, h('option', { value: 'todos' }, 'Todos los vehículos'), vehiculos.map(v => h('option', { key: v.id, value: v.id }, v.placa)))),
-          h(FG, { label: 'Conductor' }, h('select', { className: 'fsel', value: fConductor, onChange: e => setFConductor(e.target.value) }, h('option', { value: 'todos' }, 'Todos los conductores'), conductores.map(c => h('option', { key: c.id, value: c.id }, c.nombre))))
+          h(FG, { label: 'Contrato' }, h(MultiSelectFiltro, { label: 'Contrato', selected: fContratos, onChange: setFContratos, opciones: contratos.map(k => ({ id: k.id, label: k.nombre })) })),
+          h(FG, { label: 'Vehículo / Placa' }, h(MultiSelectFiltro, { label: 'Vehículo', selected: fVehiculos, onChange: setFVehiculos, opciones: vehiculos.map(v => ({ id: v.id, label: v.placa })) })),
+          h(FG, { label: 'Conductor' }, h(MultiSelectFiltro, { label: 'Conductor', selected: fConductores, onChange: setFConductores, opciones: conductores.map(c => ({ id: c.id, label: c.nombre })) }))
         ),
         h('div', { className: 'fg2' },
           h(FG, { label: 'Desde' }, h('input', { type: 'date', className: 'fi', value: fDesde, onChange: e => setFDesde(e.target.value) })),
