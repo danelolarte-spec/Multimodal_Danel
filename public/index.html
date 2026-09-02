@@ -3139,15 +3139,25 @@ function generarServiciosDemoSeptiembre() {
         const numParadas = 1 + Math.floor(Math.random() * 3);
         campos['3'] = Array.from({ length: numParadas }, () => { const texto = pick(PARADAS_DEMO); return { texto, geo: locGeo(texto) }; });
       }
+      const pax = 1 + Math.floor(Math.random() * 30);
+      const usuarios = Math.random() < 0.4 ? Array.from({ length: Math.min(pax, 1 + Math.floor(Math.random() * 3)) }, (_, ui) => ({
+        nombre: pick(['Laura Gómez', 'Andrés Ruiz', 'Camila Torres', 'Diego Salazar', 'Valentina Muñoz', 'Julián Correa']),
+        telefono: `300${String(1000000 + Math.floor(Math.random() * 8999999))}`,
+        id: `CC-${10000000 + Math.floor(Math.random() * 89999999)}`,
+      })) : [];
       out.push({
         id: `sd${String(n).padStart(4, '0')}`,
+        numero: `${String(dia).padStart(2, '0')}/09/26-${String(i + 1).padStart(3, '0')}`,
         fecha, hora: `${String(horaH).padStart(2, '0')}:${String(horaM).padStart(2, '0')}`,
         contratoId: k.id, producto,
         vehiculoId: sinAsignar ? null : pick(VEHICULOS_DEMO),
         conductorId: sinAsignar ? null : pick(CONDUCTORES_DEMO),
         origen, destino, origenGeo: locGeo(origen), destinoGeo: locGeo(destino),
-        estado, valor, pax: 1 + Math.floor(Math.random() * 30), obs: '',
+        ventanaRuta: Math.random() < 0.3 ? `${String(horaH).padStart(2, '0')}:${String(horaM).padStart(2, '0')} - ${String(horaH).padStart(2, '0')}:${String((horaM + 30) % 60).padStart(2, '0')}` : '',
+        referencia: Math.random() < 0.3 ? `REF-${1000 + Math.floor(Math.random() * 8999)}` : '',
+        estado, valor, pax, usuarios, obs: '',
         campos,
+        historial: [{ fecha: `${fecha}T06:00:00.000Z`, usuario: 'Sistema', accion: 'Servicio creado', detalle: `Estado inicial: ${estado}` }],
       });
     }
   }
@@ -3156,25 +3166,48 @@ function generarServiciosDemoSeptiembre() {
 let _serviciosStore = null;
 function getServiciosStore() {
   if (!_serviciosStore) {
+    const contadorPorFecha = {};
     _serviciosStore = servicios0.map(function (s) {
-      // Los 458 servicios de ejemplo originales no traían geocoordenadas — se completan aquí
-      // por nombre (LOC_COORDS) para que también tengan ruta real en Google Maps.
+      // Los 458 servicios de ejemplo originales no traían geocoordenadas ni número — se completan
+      // aquí (geo por nombre vía LOC_COORDS; número DD/MM/AA-NNN consecutivo por fecha).
+      contadorPorFecha[s.fecha] = (contadorPorFecha[s.fecha] || 0) + 1;
+      const [y, m, d] = (s.fecha || '2026-01-01').split('-');
       return Object.assign({}, s, {
         origenGeo: s.origenGeo || locGeo(s.origen),
         destinoGeo: s.destinoGeo || locGeo(s.destino),
+        numero: s.numero || `${d}/${m}/${y.slice(2)}-${String(contadorPorFecha[s.fecha]).padStart(3, '0')}`,
+        historial: s.historial || [{ fecha: s.fecha + 'T00:00:00.000Z', usuario: 'Sistema', accion: 'Servicio creado', detalle: `Estado inicial: ${s.estado}` }],
       });
     }).concat(generarServiciosDemoSeptiembre());
   }
   return _serviciosStore;
 }
+// DD/MM/AA-NNN, NNN consecutivo dentro de los servicios ya agendados para esa misma fecha —
+// mismo esquema que numeroServicio() en el servidor (server.js), para los servicios mock.
+function numeroServicioMock(fecha) {
+  const [y, m, d] = fecha.split('-');
+  const n = (_serviciosStore || []).filter(function (s) { return s.fecha === fecha; }).length + 1;
+  return `${d}/${m}/${y.slice(2)}-${String(n).padStart(3, '0')}`;
+}
+function agregarHistorialMock(id, entrada) {
+  _serviciosStore = _serviciosStore.map(function (s) {
+    if (s.id !== id) return s;
+    const hist = s.historial || [];
+    return Object.assign({}, s, { historial: [...hist, Object.assign({ fecha: new Date().toISOString() }, entrada)] });
+  });
+}
 function updateServicio(id, upd) {
   if (!_serviciosStore) getServiciosStore();
   _serviciosStore = _serviciosStore.map(function (s) { return s.id === id ? Object.assign({}, s, upd) : s; });
+  const accion = upd.estado ? `Cambió estado a: ${upd.estado}` : 'Editó el servicio';
+  agregarHistorialMock(id, { usuario: USUARIO.nombre, accion, detalle: upd.conductorId ? 'Conductor/vehículo asignado' : '' });
 }
 function addServicioStore(s) {
   if (!_serviciosStore) getServiciosStore();
   const id = 's' + String(_serviciosStore.length + 1).padStart(3, '0');
-  _serviciosStore = [..._serviciosStore, Object.assign({}, s, { id: id })];
+  const numero = s.numero || numeroServicioMock(s.fecha);
+  const historial = [{ fecha: new Date().toISOString(), usuario: USUARIO.nombre, accion: 'Servicio creado', detalle: `Estado inicial: ${s.estado || 'Creado'}` }];
+  _serviciosStore = [..._serviciosStore, Object.assign({}, s, { id: id, numero: numero, historial: historial })];
 }
 function delServicioStore(id) {
   if (!_serviciosStore) getServiciosStore();
@@ -21180,6 +21213,64 @@ function RutaMapaLink({ origenGeo, destinoGeo }) {
   return h('a', { href: url, target: '_blank', rel: 'noreferrer', className: 'btn bs btn-sm', style: { width: '100%', justifyContent: 'center', marginTop: 6 } }, '🗺️ Ver ruta en Google Maps');
 }
 
+// Ventana gráfica de la ruta: un mini-mapa esquemático dibujado en SVG (sin necesitar API key de
+// mapas) — ubica origen, paradas intermedias y destino según sus coordenadas y traza el recorrido.
+function RutaMapaGrafico({ origenGeo, destinoGeo, origenTxt, destinoTxt, paradas }) {
+  const puntos = [];
+  if (origenGeo) puntos.push({ ...origenGeo, tipo: 'O', label: origenTxt || 'Origen' });
+  (paradas || []).forEach((p, i) => { if (p.geo) puntos.push({ ...p.geo, tipo: String(i + 1), label: p.texto || `Parada ${i + 1}` }); });
+  if (destinoGeo) puntos.push({ ...destinoGeo, tipo: 'D', label: destinoTxt || 'Destino' });
+
+  if (puntos.length === 0) {
+    return h('div', { className: 'empty', style: { border: '1px dashed var(--border2)', borderRadius: 'var(--r)', padding: 18 } }, h('div', { className: 'txs tmut' }, 'Sin coordenadas georreferenciadas para mostrar la ruta'));
+  }
+  const W = 100, H = 100, PAD = 14;
+  const lats = puntos.map(p => p.lat), lngs = puntos.map(p => p.lng);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const spanLat = maxLat - minLat || 0.001, spanLng = maxLng - minLng || 0.001;
+  const proj = p => ({
+    x: PAD + ((p.lng - minLng) / spanLng) * (W - 2 * PAD),
+    y: H - PAD - ((p.lat - minLat) / spanLat) * (H - 2 * PAD),
+  });
+  const xy = puntos.map(proj);
+  const pathD = xy.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const colorFor = tipo => tipo === 'O' ? 'var(--green,#2e7d32)' : tipo === 'D' ? 'var(--red,#c62828)' : 'var(--amber,#e6a817)';
+
+  return h('div', { style: { border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: 10, background: 'var(--surface2)' } },
+    h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: 180, display: 'block' } },
+      puntos.length > 1 && h('path', { d: pathD, fill: 'none', stroke: 'var(--border2)', strokeWidth: 1.2, strokeDasharray: '2,1.5' }),
+      xy.map((c, i) => h('g', { key: i },
+        h('circle', { cx: c.x, cy: c.y, r: 3.2, fill: colorFor(puntos[i].tipo), stroke: '#fff', strokeWidth: 0.8 }),
+        h('text', { x: c.x, y: c.y - 4.5, fontSize: 4.2, textAnchor: 'middle', fill: 'var(--text)', fontWeight: 700 }, puntos[i].tipo)
+      ))
+    ),
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 } },
+      puntos.map((p, i) => h('div', { key: i, className: 'txs', style: { display: 'flex', gap: 6, alignItems: 'center' } },
+        h('span', { style: { display: 'inline-block', width: 14, height: 14, borderRadius: '50%', background: colorFor(p.tipo), color: '#fff', fontSize: 8, fontWeight: 700, textAlign: 'center', lineHeight: '14px', flexShrink: 0 } }, p.tipo),
+        h('span', { className: 'tmut' }, p.label)))
+    )
+  );
+}
+
+// Lista repetible de usuarios (pasajeros nominados) del servicio: nombre, teléfono e identificación.
+function UsuariosField({ value, onChange }) {
+  const usuarios = value && value.length ? value : [];
+  const setUsuario = (i, patch) => { const next = usuarios.slice(); next[i] = Object.assign({}, next[i], patch); onChange(next); };
+  const addUsuario = () => onChange([...usuarios, { nombre: '', telefono: '', id: '' }]);
+  const delUsuario = i => onChange(usuarios.filter((_, idx) => idx !== i));
+
+  return h('div', null,
+    usuarios.map((u, i) => h('div', { key: i, className: 'g3c', style: { gap: 6, marginBottom: 6, alignItems: 'center' } },
+      h('input', { className: 'fi', placeholder: 'Nombre', value: u.nombre || '', onChange: e => setUsuario(i, { nombre: e.target.value }) }),
+      h('input', { className: 'fi', placeholder: 'Teléfono', value: u.telefono || '', onChange: e => setUsuario(i, { telefono: e.target.value }) }),
+      h('div', { style: { display: 'flex', gap: 6 } },
+        h('input', { className: 'fi', placeholder: 'ID / Cédula', value: u.id || '', onChange: e => setUsuario(i, { id: e.target.value }) }),
+        h('button', { className: 'bi', onClick: () => delUsuario(i) }, '✕'))
+    )),
+    h('button', { className: 'btn bs btn-sm', onClick: addUsuario }, '+ Agregar usuario')
+  );
+}
+
 function habilitadosParaOperar() {
   // Solo vehículos que Trámites tiene habilitados para operar
   return getVehiculosStore().filter(function (v) { return v.estado === 'Activo'; });
@@ -21187,10 +21278,17 @@ function habilitadosParaOperar() {
 function conductoresHabilitados() {
   return getConductores().filter(function (c) { return c.activo; });
 }
+// En Operaciones, un usuario con rol "operaciones" solo debe ver los servicios de los contratos
+// donde está asignado como logístico — si el contrato no tiene logístico asignado, lo ven todos
+// (evita bloquear contratos legados/demo que nunca se configuraron). Otros roles ven todo.
+function contratosVisiblesOperaciones(contratos) {
+  if (USUARIO.rol !== 'operaciones') return contratos;
+  return contratos.filter(k => !k.logisticoNombre || k.logisticoNombre === USUARIO.nombre);
+}
 
 // ─────────────────────── CONTRATOS ───────────────────────
 function ContratoFormModal({ contrato, onSave, onClose }) {
-  const [f, setF] = useState(contrato ? Object.assign({}, contrato, { productos: contrato.productos || [], conductorIds: contrato.conductorIds || [] }) : { nombre: '', nit: '', tipo: 'Corporativo', estado: 'Activo', valor: 0, campos: [], productos: [], conductorIds: [], logisticoNombre: '', fechaVencimiento: '', contratoPdfNombre: '', contratoPdfData: '' });
+  const [f, setF] = useState(contrato ? Object.assign({}, contrato, { productos: contrato.productos || [], conductorIds: contrato.conductorIds || [] }) : { nombre: '', nit: '', tipo: 'Corporativo', estado: 'Activo', valor: 0, campos: [], productos: [], conductorIds: [], logisticoNombre: '', fechaVencimiento: '', contratoPdfNombre: '', contratoPdfData: '', contactoNegociador: '', contactoContable: '', consideracionesOperativas: '', consideracionesContables: '', consideracionesComerciales: '' });
   const [nc, setNc] = useState({ nombre: '', tipo: 'texto', req: false, opcionesTxt: '' });
   const primerProducto = Object.keys(PRODUCTOS_SERVICIO)[0];
   const [np, setNp] = useState({ producto: primerProducto, tarifa: PRODUCTOS_SERVICIO[primerProducto].tarifaBase, tarifaAfiliado: 0, origen: '', destino: '', cantidadDisponibilidades: 1, editando: null });
@@ -21260,6 +21358,18 @@ function ContratoFormModal({ contrato, onSave, onClose }) {
         h(FG, { label: 'Valor mensual (COP)' }, h('input', { type: 'number', className: 'fi', value: f.valor, onChange: set('valor') }))
       ),
       h(FG, { label: 'Logístico asignado' }, h('input', { className: 'fi', value: f.logisticoNombre || '', onChange: set('logisticoNombre'), placeholder: 'Nombre del coordinador logístico' })),
+      h('div', { className: 'txs tmut', style: { marginTop: -8, marginBottom: 10 } }, 'En Operaciones, este usuario solo verá los servicios de los contratos donde es el logístico asignado (si se deja vacío, lo ven todos).'),
+      h('div', { className: 'divider' }),
+      h('div', { className: 'if-label mb2' }, 'Contactos'),
+      h('div', { className: 'fg2' },
+        h(FG, { label: 'Contacto de negociador' }, h('input', { className: 'fi', value: f.contactoNegociador || '', onChange: set('contactoNegociador'), placeholder: 'Nombre, cargo, teléfono/correo' })),
+        h(FG, { label: 'Contacto área contable' }, h('input', { className: 'fi', value: f.contactoContable || '', onChange: set('contactoContable'), placeholder: 'Nombre, cargo, teléfono/correo' }))
+      ),
+      h('div', { className: 'divider' }),
+      h('div', { className: 'if-label mb2' }, 'Consideraciones'),
+      h(FG, { label: 'Consideraciones operativas' }, h('textarea', { className: 'fta', rows: 2, value: f.consideracionesOperativas || '', onChange: set('consideracionesOperativas') })),
+      h(FG, { label: 'Consideraciones contables' }, h('textarea', { className: 'fta', rows: 2, value: f.consideracionesContables || '', onChange: set('consideracionesContables') })),
+      h(FG, { label: 'Consideraciones comerciales' }, h('textarea', { className: 'fta', rows: 2, value: f.consideracionesComerciales || '', onChange: set('consideracionesComerciales') })),
       h('div', { className: 'divider' }),
       h('div', { className: 'if-label mb2' }, 'Contrato firmado y vigencia'),
       h('div', { className: 'fg2' },
@@ -21411,6 +21521,15 @@ function Contratos({ toast }) {
               h(IField, { label: 'Vence', value: k.fechaVencimiento || '—' }),
               h(IField, { label: 'Contrato firmado', value: k.contratoPdfNombre ? h('a', { href: k.contratoPdfData, download: k.contratoPdfNombre, style: { color: 'var(--amber-d)' } }, `📎 ${k.contratoPdfNombre}`) : '—' })
             ),
+            (k.contactoNegociador || k.contactoContable) && h('div', { className: 'g2c mb3' },
+              h(IField, { label: 'Contacto negociador', value: k.contactoNegociador || '—' }),
+              h(IField, { label: 'Contacto contable', value: k.contactoContable || '—' })
+            ),
+            (k.consideracionesOperativas || k.consideracionesContables || k.consideracionesComerciales) && h('div', { className: 'mb3', style: { display: 'flex', flexDirection: 'column', gap: 5 } },
+              k.consideracionesOperativas && h(IField, { label: 'Consideraciones operativas', value: k.consideracionesOperativas }),
+              k.consideracionesContables && h(IField, { label: 'Consideraciones contables', value: k.consideracionesContables }),
+              k.consideracionesComerciales && h(IField, { label: 'Consideraciones comerciales', value: k.consideracionesComerciales })
+            ),
             k.productos && k.productos.length > 0 && h('div', { className: 'mb3' },
               h('div', { className: 'if-label mb2' }, 'Tarifario'),
               h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } },
@@ -21441,7 +21560,7 @@ function Contratos({ toast }) {
 }
 
 // ─────────────────────── SERVICIOS ───────────────────────
-const SERVICIO_FORM_DEFAULT = { contratoId: '', producto: '', fecha: new Date().toISOString().slice(0, 10), hora: '', origen: '', destino: '', origenGeo: null, destinoGeo: null, vehiculoId: '', conductorId: '', pax: 1, valor: 0, estado: 'Creado', obs: '', campos: {} };
+const SERVICIO_FORM_DEFAULT = { contratoId: '', producto: '', fecha: new Date().toISOString().slice(0, 10), hora: '', origen: '', destino: '', origenGeo: null, destinoGeo: null, ventanaRuta: '', referencia: '', vehiculoId: '', conductorId: '', pax: 1, usuarios: [], valor: 0, estado: 'Creado', obs: '', campos: {} };
 function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave, onGuardarTarifa, onClose }) {
   // servicio puede ser: null (nuevo, en blanco), un servicio completo (editar, trae id) o un
   // objeto parcial como { fecha, hora } (nuevo, precargado — p.ej. al hacer clic en una casilla
@@ -21515,7 +21634,11 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     h('div', { className: 'mb' },
       h('div', { className: 'g2c' },
         h('div', null,
-          h(FG, { label: 'Contrato' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre + (c.extracto_cliente_id ? ' (Comercial)' : ''))))),
+          h(FG, { label: 'Cliente (contrato)' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre + (c.extracto_cliente_id ? ' (Comercial)' : ''))))),
+          h('div', { className: 'fg2' },
+            h(FG, { label: 'Fecha del servicio' }, h('input', { type: 'date', className: 'fi', value: f.fecha, onChange: set('fecha') })),
+            h(FG, { label: 'Hora' }, h('input', { type: 'time', className: 'fi', value: f.hora, onChange: set('hora') }))
+          ),
           esReal
             ? h(FG, { label: 'Servicio y ruta — tarifario de ' + k.nombre + ' (Comercial)' },
                 h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
@@ -21540,23 +21663,21 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
               h('input', { type: 'checkbox', checked: guardarEnContrato, onChange: e => setGuardarEnContrato(e.target.checked) }),
               `Guardar esta ruta y tarifa en el contrato de ${k.nombre} para futuros servicios`)
           ),
-          h('div', { className: 'fg2' },
-            h(FG, { label: 'Fecha' }, h('input', { type: 'date', className: 'fi', value: f.fecha, onChange: set('fecha') })),
-            h(FG, { label: 'Hora' }, h('input', { type: 'time', className: 'fi', value: f.hora, onChange: set('hora') }))
-          ),
-          h(FG, { label: 'Estado' }, h('select', { className: 'fsel', value: f.estado, onChange: set('estado') }, ESTADOS_SERVICIO_TODOS.map(s => h('option', { key: s }, s)))),
           h(FG, { label: 'Origen (georreferenciado)' }, h(AddressField, { value: f.origen, geo: f.origenGeo, placeholder: 'Dirección de recogida', onChange: (texto, geo) => setF(p => Object.assign({}, p, { origen: texto }, geo ? { origenGeo: geo } : {})) })),
           h(FG, { label: 'Destino (georreferenciado)' }, h(AddressField, { value: f.destino, geo: f.destinoGeo, placeholder: 'Dirección de destino', onChange: (texto, geo) => setF(p => Object.assign({}, p, { destino: texto }, geo ? { destinoGeo: geo } : {})) })),
           h(RutaMapaLink, { origenGeo: f.origenGeo, destinoGeo: f.destinoGeo }),
+          h(FG, { label: 'Ventana de ruta' }, h('input', { className: 'fi', placeholder: 'Ej: 06:00 - 06:30', value: f.ventanaRuta || '', onChange: set('ventanaRuta') })),
+          h(FG, { label: 'Referencia' }, h('input', { className: 'fi', placeholder: 'Referencia / PO del cliente', value: f.referencia || '', onChange: set('referencia') })),
+          h(FG, { label: 'Anotaciones generales' }, h('textarea', { className: 'fta', rows: 2, value: f.obs, onChange: set('obs') })),
+          h(FG, { label: 'Número de usuarios' }, h('input', { type: 'number', min: 1, className: 'fi', value: f.pax, onChange: set('pax') })),
+          h(FG, { label: 'Usuarios — nombre, teléfono e ID' }, h(UsuariosField, { value: f.usuarios, onChange: v => setF(p => Object.assign({}, p, { usuarios: v })) })),
+          h(FG, { label: 'Valor del servicio (COP)' }, h('input', { type: 'number', className: 'fi', value: f.valor, onChange: set('valor') })),
+          h('div', { className: 'divider' }),
+          h(FG, { label: 'Estado' }, h('select', { className: 'fsel', value: f.estado, onChange: set('estado') }, ESTADOS_SERVICIO_TODOS.map(s => h('option', { key: s }, s)))),
           h('div', { className: 'fg2' },
             h(FG, { label: 'Vehículo (habilitados para operar)' }, h('select', { className: 'fsel', value: f.vehiculoId || '', onChange: set('vehiculoId') }, h('option', { value: '' }, 'Sin asignar'), vehiculos.map(v => h('option', { key: v.id, value: v.id }, `${v.placa} (${v.capacidad} pas.)`)))),
             h(FG, { label: 'Conductor' }, h('select', { className: 'fsel', value: f.conductorId || '', onChange: set('conductorId') }, h('option', { value: '' }, 'Sin asignar'), conductores.map(c => h('option', { key: c.id, value: c.id }, c.nombre))))
           ),
-          h('div', { className: 'fg2' },
-            h(FG, { label: 'Pasajeros' }, h('input', { type: 'number', min: 1, className: 'fi', value: f.pax, onChange: set('pax') })),
-            h(FG, { label: 'Valor (COP)' }, h('input', { type: 'number', className: 'fi', value: f.valor, onChange: set('valor') }))
-          ),
-          h(FG, { label: 'Observaciones' }, h('textarea', { className: 'fta', rows: 2, value: f.obs, onChange: set('obs') })),
           h('div', { className: 'flex gap2 mt3' },
             h('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
             h('button', { className: 'btn bp', onClick: save }, 'Guardar Servicio')
@@ -21582,7 +21703,7 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     )
   );
 }
-function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, onAvanzarEstado, onConfirmarLiquidacion, onAsignar }) {
+function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, onAvanzarEstado, onConfirmarLiquidacion, onAsignar, onVerHistorial }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btnRef = React.useRef(null);
@@ -21606,6 +21727,7 @@ function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGener
       h('div', { className: 'card', style: { position: 'fixed', top: pos.top, left: pos.left, zIndex: 401, minWidth: 200, padding: 4, boxShadow: 'var(--sh-lg)' } },
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onVer(); } }, '👁 Ver servicio'),
         h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onEditar(); } }, '✎ Editar servicio'),
+        onVerHistorial && h('button', { className: 'btn bs', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onVerHistorial(); } }, '🕐 Ver historial'),
         puedeAsignar && onAsignar && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onAsignar(); } }, '▶ Asignar conductor y vehículo'),
         siguienteSimple && onAvanzarEstado && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onAvanzarEstado(); } }, `▶ Marcar «${siguienteSimple}»`),
         puedeConfirmarLiquidacion && onConfirmarLiquidacion && h('button', { className: 'btn bsu', style: { width: '100%', justifyContent: 'flex-start', border: 'none', marginBottom: 2 }, onClick: () => { setOpen(false); onConfirmarLiquidacion(); } }, '✓ Confirmar liquidación'),
@@ -21655,7 +21777,7 @@ function AsignarServicioModal({ servicio: s, vehiculos, conductores, onSave, onC
   );
 }
 
-function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onClose }) {
+function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onVerHistorial, onClose }) {
   // Valor a pagar al proveedor/afiliado: no vive en el servicio (solo el valor cobrado al
   // cliente sí) — para clientes de Comercial, se busca en su tarifario la fila que coincide
   // con el producto/origen/destino del servicio (la misma que se usó para crearlo).
@@ -21675,34 +21797,43 @@ function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onClose 
   const paradasCampoDef = camposDef.find(c => c.tipo === 'paradas');
   const paradas = paradasCampoDef && s.campos ? (s.campos[paradasCampoDef.id] || []) : [];
   const otrosCampos = camposDef.filter(c => c.tipo !== 'paradas' && s.campos && s.campos[c.id] != null && s.campos[c.id] !== '');
+  const usuarios = s.usuarios || [];
 
-  return h(Modal, { open: true, onClose: onClose, title: `👁 Servicio ${s.id}`, lg: paradas.length > 0 },
+  return h(Modal, { open: true, onClose: onClose, title: `👁 Servicio ${s.numero || s.id}`, lg: true },
     h('div', { className: 'mb' },
       h('div', { className: 'flex gap2 mb3' }, h('span', { className: `badge ${ESTADO_SVC_BADGE[s.estado] || 'bgr'}` }, s.estado), s.producto && h('span', { className: 'badge bgr', style: { background: PRODUCTOS_SERVICIO[s.producto]?.bg, color: PRODUCTOS_SERVICIO[s.producto]?.color } }, productoLbl(s.producto))),
 
-      h('div', { className: 'ct', style: { fontSize: 12, margin: '4px 0 8px' } }, '🗺️ Ruta'),
       h('div', { className: 'dtg' },
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Cliente'), h('div', { className: 'if-val' }, contrato ? contrato.nombre : '—')),
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Fecha del servicio'), h('div', { className: 'if-val' }, s.fecha || '—')),
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Hora'), h('div', { className: 'if-val' }, s.hora || '—')),
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Tipo de servicio'), h('div', { className: 'if-val' }, s.producto ? productoLbl(s.producto) : '—')),
         h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Origen'), h('div', { className: 'if-val' }, s.origen || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Destino'), h('div', { className: 'if-val' }, s.destino || '—'))
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Destino'), h('div', { className: 'if-val' }, s.destino || '—')),
+        s.ventanaRuta && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Ventana de ruta'), h('div', { className: 'if-val' }, s.ventanaRuta)),
+        s.referencia && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Referencia'), h('div', { className: 'if-val' }, s.referencia)),
+        s.obs && h('div', { className: 'drow', style: { gridColumn: '1/-1' } }, h('div', { className: 'if-label' }, 'Anotaciones generales'), h('div', { className: 'if-val' }, s.obs)),
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Número de usuarios'), h('div', { className: 'if-val' }, s.pax || '—')),
+        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor del servicio'), h('div', { className: 'if-val fbold' }, fmt(s.valor))),
+        contrato && contrato.extracto_cliente_id && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor a pagar al proveedor'), h('div', { className: 'if-val fbold' }, tarifarioItem ? fmt(tarifarioItem.pago_afiliado) : '—')),
       ),
-      paradas.length > 0 && h('div', { style: { marginBottom: 11 } },
-        h('div', { className: 'if-label' }, `Paradas (${paradas.length})`),
-        paradas.map((p, i) => h('div', { key: i, className: 'if-val', style: { display: 'flex', gap: 6 } },
-          h('span', { className: 'tmut' }, `${i + 1}.`), p.texto || '—'))
+
+      usuarios.length > 0 && h('div', { style: { marginTop: 11, marginBottom: 4 } },
+        h('div', { className: 'if-label' }, `Usuarios (${usuarios.length})`),
+        usuarios.map((u, i) => h('div', { key: i, className: 'if-val', style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
+          h('span', null, `👤 ${u.nombre || '—'}`), u.telefono && h('span', { className: 'tmut' }, `📞 ${u.telefono}`), u.id && h('span', { className: 'tmut' }, `🪪 ${u.id}`)))
       ),
+
+      h('div', { className: 'divider' }),
+      h('div', { className: 'ct', style: { fontSize: 12, margin: '4px 0 8px' } }, '🗺️ Ventana de ruta (gráfico)'),
+      h(RutaMapaGrafico, { origenGeo: s.origenGeo, destinoGeo: s.destinoGeo, origenTxt: s.origen, destinoTxt: s.destino, paradas }),
       h(RutaMapaLink, { origenGeo: s.origenGeo, destinoGeo: s.destinoGeo }),
 
       h('div', { className: 'divider' }),
       h('div', { className: 'dtg' },
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Contrato'), h('div', { className: 'if-val' }, contrato ? contrato.nombre : '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Fecha / Hora'), h('div', { className: 'if-val' }, `${s.fecha || '—'} · ${s.hora || '—'}`)),
         h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Vehículo'), h('div', { className: 'if-val' }, vehiculo ? `${vehiculo.placa} (${vehiculo.tipo})` : 'Sin asignar')),
         h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Conductor'), h('div', { className: 'if-val' }, conductor ? conductor.nombre : 'Sin asignar')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Pasajeros'), h('div', { className: 'if-val' }, s.pax || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor cobrado al cliente'), h('div', { className: 'if-val fbold' }, fmt(s.valor))),
-        contrato && contrato.extracto_cliente_id && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor a pagar al proveedor'), h('div', { className: 'if-val fbold' }, tarifarioItem ? fmt(tarifarioItem.pago_afiliado) : '—')),
         otrosCampos.map(c => h('div', { key: c.id, className: 'drow' }, h('div', { className: 'if-label' }, c.nombre), h('div', { className: 'if-val' }, String(s.campos[c.id])))),
-        s.obs && h('div', { className: 'drow', style: { gridColumn: '1/-1' } }, h('div', { className: 'if-label' }, 'Observaciones'), h('div', { className: 'if-val' }, s.obs))
       ),
       s.liquidacion && h('div', { className: 'card mt3' },
         h('div', { className: 'ch' }, h('span', { className: 'ct' }, '🧾 Liquidación')),
@@ -21713,6 +21844,30 @@ function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onClose 
           s.liquidacion.novedades && h(React.Fragment, null, h('div', { className: 'if-label' }, 'Novedades'), h('div', { className: 'if-val' }, s.liquidacion.novedades))
         )
       ),
+      h('div', { className: 'flex gap2 mt3' },
+        onVerHistorial && h('button', { className: 'btn bs', onClick: onVerHistorial }, '🕐 Ver historial'),
+        h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar')
+      )
+    )
+  );
+}
+
+function HistorialServicioModal({ servicio: s, onClose }) {
+  const historial = (s.historial || []).slice().sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  return h(Modal, { open: true, onClose, title: `🕐 Historial — Servicio ${s.numero || s.id}` },
+    h('div', { className: 'mb' },
+      historial.length === 0
+        ? h('div', { className: 'empty' }, h('p', null, 'Sin cambios registrados'))
+        : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+            historial.map((e, i) => h('div', { key: i, style: { borderLeft: '3px solid var(--amber)', paddingLeft: 10 } },
+              h('div', { className: 'flex gap2', style: { alignItems: 'baseline' } },
+                h('span', { className: 'fbold txs' }, e.accion || 'Cambio'),
+                h('span', { className: 'txs tmut' }, e.fecha ? new Date(e.fecha).toLocaleString('es-CO') : '—')
+              ),
+              h('div', { className: 'txs tmut' }, `Por: ${e.usuario || 'Sistema'}`),
+              e.detalle && h('div', { className: 'txs', style: { marginTop: 2 } }, e.detalle)
+            ))
+          ),
       h('div', { className: 'flex gap2 mt3' }, h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'))
     )
   );
@@ -21778,12 +21933,13 @@ function Servicios({ toast }) {
   const [fDesde, setFDesde] = useState('');
   const [fHasta, setFHasta] = useState('');
   const [viewing, setViewing] = useState(null);
+  const [viendoHistorial, setViendoHistorial] = useState(null);
   const [liquidando, setLiquidando] = useState(null);
   const [asignando, setAsignando] = useState(null);
   const [buscado, setBuscado] = useState(false);
   const [contratosReales, setContratosReales] = useState([]);
 
-  const contratos = [...getContratosStore(), ...contratosReales];
+  const contratos = contratosVisiblesOperaciones([...getContratosStore(), ...contratosReales]);
   const vehiculos = habilitadosParaOperar();
   const conductores = conductoresHabilitados();
   const refresh = () => {
@@ -21806,14 +21962,16 @@ function Servicios({ toast }) {
       fecha: s.fecha, hora: s.hora, contrato_id: s.contratoId, producto: s.producto || null,
       vehiculo_id: s.vehiculoId || null, conductor_id: s.conductorId || null,
       origen: s.origen, destino: s.destino, origenGeo: s.origenGeo, destinoGeo: s.destinoGeo,
+      ventana_ruta: s.ventanaRuta || null, referencia: s.referencia || null,
       estado: s.estado, valor: Number(s.valor) || 0, pax: Number(s.pax) || 1, obs: s.obs || null,
-      campos: s.campos || {},
+      usuarios: s.usuarios || [], campos: s.campos || {},
     };
   }
 
   const filtered = !buscado ? [] : list.filter(s => {
     const k = contratos.find(x => x.id === s.contratoId);
     const c = getConductores().find(x => x.id === s.conductorId);
+    if (USUARIO.rol === 'operaciones' && !k) return false; // contrato con logístico distinto asignado: no visible para este usuario
     const txt = `${s.id} ${s.origen} ${s.destino} ${k ? k.nombre : ''} ${c ? c.nombre : ''}`.toLowerCase();
     if (!txt.includes(search.toLowerCase())) return false;
     if (fOrden.trim() && !s.id.toLowerCase().includes(fOrden.trim().toLowerCase())) return false;
@@ -21956,7 +22114,7 @@ function Servicios({ toast }) {
                         const c = getConductores().find(x => x.id === s.conductorId);
                         const pc = PRODUCTOS_SERVICIO[s.producto];
                         return h('tr', { key: s.id, style: pc ? { borderLeft: `3px solid ${pc.color}` } : {} },
-                          h('td', { className: 'tmono txs fbold' }, s.id),
+                          h('td', { className: 'tmono txs fbold' }, s.numero || s.id),
                           h('td', { className: 'txs tmono' }, s.fecha || '—'),
                           h('td', { className: 'fbold' }, s.hora),
                           h('td', null, pc ? h('span', { className: 'badge', style: { background: pc.bg, color: pc.color } }, pc.label) : h('span', { className: 'txs tmut' }, '—')),
@@ -21977,6 +22135,7 @@ function Servicios({ toast }) {
                             onAvanzarEstado: () => handleAvanzarEstado(s),
                             onConfirmarLiquidacion: () => handleConfirmarLiquidacion(s),
                             onAsignar: () => setAsignando(s),
+                            onVerHistorial: () => setViendoHistorial(s),
                             onGenerarExtracto: (k && k.extracto_cliente_id && !s.extracto_id) ? () => handleGenerarExtracto(s) : undefined
                           }))
                         );
@@ -21994,8 +22153,10 @@ function Servicios({ toast }) {
       contrato: contratos.find(x => x.id === viewing.contratoId),
       vehiculo: getVehiculosStore().find(x => x.id === viewing.vehiculoId),
       conductor: getConductores().find(x => x.id === viewing.conductorId),
+      onVerHistorial: () => setViendoHistorial(viewing),
       onClose: () => setViewing(null)
     }),
+    viendoHistorial && h(HistorialServicioModal, { servicio: viendoHistorial, onClose: () => setViendoHistorial(null) }),
     liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast: toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) }),
     asignando && h(AsignarServicioModal, { servicio: asignando, vehiculos: vehiculos, conductores: conductores, onSave: datos => handleAsignar(asignando, datos), onClose: () => setAsignando(null) })
   );
@@ -22101,7 +22262,7 @@ function TableroEvento({ s, contrato, conductor, color, detalle, acciones }) {
         onVer: acciones.onVer, onEditar: acciones.onEditar, onCancelar: acciones.onCancelar,
         onLiquidar: acciones.onLiquidar, onGenerarExtracto: acciones.onGenerarExtracto,
         onAvanzarEstado: acciones.onAvanzarEstado, onConfirmarLiquidacion: acciones.onConfirmarLiquidacion,
-        onAsignar: acciones.onAsignar,
+        onAsignar: acciones.onAsignar, onVerHistorial: acciones.onVerHistorial,
       })
     )
   );
@@ -22160,8 +22321,32 @@ function TableroVistaMes({ fechaRef, servicios, contratos, conductores, colorBy,
 
 function TableroGridHoras({ dias, servicios, contratos, conductores, colorBy, onCeldaClick, acciones }) {
   // dias: [{fecha, label}]. Grilla: columna de horas + una columna por día.
+  // En la visual de día (dias.length === 1) y si ese día es hoy, se dibuja una línea roja que
+  // marca la hora actual — se reposiciona solo (re-render cada minuto) mientras el usuario mira el tablero.
+  const ROW_H = 34, HEADER_H = 30;
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => forceTick(x => x + 1), 60000);
+    return () => clearInterval(t);
+  }, []);
+  const esVistaDiaHoy = dias.length === 1 && dias[0].esHoy;
+  let lineaAhoraTop = null;
+  if (esVistaDiaHoy) {
+    const ahora = new Date();
+    const horaActual = ahora.getHours() + ahora.getMinutes() / 60;
+    if (horaActual >= TABLERO_HORAS[0] && horaActual <= TABLERO_HORAS[TABLERO_HORAS.length - 1] + 1) {
+      lineaAhoraTop = HEADER_H + (horaActual - TABLERO_HORAS[0]) * ROW_H;
+    }
+  }
   return h('div', { className: 'card' },
-    h('div', { className: 'cb', style: { padding: 0, overflowX: 'auto' } },
+    h('div', { className: 'cb', style: { padding: 0, overflowX: 'auto', position: 'relative' } },
+      lineaAhoraTop != null && h('div', {
+        style: { position: 'absolute', left: 56, right: 0, top: lineaAhoraTop, height: 0, borderTop: '2px solid #d32f2f', zIndex: 5, pointerEvents: 'none' }
+      },
+        h('span', { style: { position: 'absolute', left: -8, top: -7, width: 8, height: 8, borderRadius: '50%', background: '#d32f2f' } }),
+        h('span', { className: 'txs', style: { position: 'absolute', left: 6, top: -16, background: '#d32f2f', color: '#fff', padding: '1px 5px', borderRadius: 3, fontWeight: 700 } },
+          `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`)
+      ),
       h('div', { style: { display: 'grid', gridTemplateColumns: `56px repeat(${dias.length}, minmax(120px,1fr))`, minWidth: dias.length > 1 ? 800 : 320 } },
         h('div', { style: { borderBottom: '1px solid var(--border)' } }),
         dias.map(dInfo => h('div', {
@@ -22206,10 +22391,11 @@ function OperacionesTablero({ toast }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [viendoHistorial, setViendoHistorial] = useState(null);
   const [liquidando, setLiquidando] = useState(null);
   const [asignando, setAsignando] = useState(null);
 
-  const contratos = [...getContratosStore(), ...contratosReales];
+  const contratos = contratosVisiblesOperaciones([...getContratosStore(), ...contratosReales]);
   const vehiculos = habilitadosParaOperar();
   const conductores = conductoresHabilitados();
 
@@ -22228,8 +22414,9 @@ function OperacionesTablero({ toast }) {
       fecha: s.fecha, hora: s.hora, contrato_id: s.contratoId, producto: s.producto || null,
       vehiculo_id: s.vehiculoId || null, conductor_id: s.conductorId || null,
       origen: s.origen, destino: s.destino, origenGeo: s.origenGeo, destinoGeo: s.destinoGeo,
+      ventana_ruta: s.ventanaRuta || null, referencia: s.referencia || null,
       estado: s.estado, valor: Number(s.valor) || 0, pax: Number(s.pax) || 1, obs: s.obs || null,
-      campos: s.campos || {},
+      usuarios: s.usuarios || [], campos: s.campos || {},
     };
   }
   const handleGuardarTarifa = (contratoId, entry) => {
@@ -22307,11 +22494,13 @@ function OperacionesTablero({ toast }) {
       onAvanzarEstado: () => handleAvanzarEstado(s),
       onConfirmarLiquidacion: () => handleConfirmarLiquidacion(s),
       onAsignar: () => setAsignando(s),
+      onVerHistorial: () => setViendoHistorial(s),
       onGenerarExtracto: (kk && kk.extracto_cliente_id && !s.extracto_id) ? () => handleGenerarExtracto(s) : undefined,
     };
   };
 
   const serviciosFiltrados = list.filter(s => {
+    if (USUARIO.rol === 'operaciones' && !contratos.some(x => x.id === s.contratoId)) return false;
     if (fEstado !== 'Todos' && s.estado !== fEstado) return false;
     if (fContratos.length && !fContratos.includes(s.contratoId)) return false;
     if (fConductores.length && !fConductores.includes(s.conductorId)) return false;
@@ -22327,6 +22516,21 @@ function OperacionesTablero({ toast }) {
   const irHoy = () => setFechaRef(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()));
   const irAnterior = () => setFechaRef(f => vista === 'mes' ? tableroSumarMeses(f, -1) : tableroSumarDias(f, vista === 'semana' ? -7 : -1));
   const irSiguiente = () => setFechaRef(f => vista === 'mes' ? tableroSumarMeses(f, 1) : tableroSumarDias(f, vista === 'semana' ? 7 : 1));
+
+  // Buscar por número de servicio (DD/MM/AA-NNN) o por id técnico: lleva a la visual de día en
+  // la fecha donde está agendado y abre su ficha completa.
+  const [buscarNumero, setBuscarNumero] = useState('');
+  const [buscarError, setBuscarError] = useState('');
+  const buscarServicioPorNumero = () => {
+    const q = buscarNumero.trim().toLowerCase();
+    if (!q) return;
+    const visibles = USUARIO.rol === 'operaciones' ? list.filter(s => contratos.some(x => x.id === s.contratoId)) : list;
+    const encontrado = visibles.find(s => (s.numero || '').toLowerCase() === q || s.id.toLowerCase() === q);
+    if (!encontrado) { setBuscarError('No se encontró ningún servicio con ese número'); return; }
+    setBuscarError('');
+    if (encontrado.fecha) irADia(encontrado.fecha);
+    setViewing(encontrado);
+  };
 
   let etiquetaPeriodo;
   if (vista === 'mes') {
@@ -22357,6 +22561,18 @@ function OperacionesTablero({ toast }) {
     h('div', { className: 'section-bar mb4' },
       h('div', null, h('div', { className: 'sh-head' }, '🗓️ Tablero de Operaciones'), h('div', { className: 'sh-sub' }, 'Distribución operativa — cada evento es un servicio')),
       h('button', { className: 'btn bp', onClick: () => abrirNuevo(tableroFechaISO(fechaRef)) }, '+ Nuevo Servicio')
+    ),
+    h('div', { className: 'card mb4' },
+      h('div', { className: 'cb', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        h('span', { className: 'txs tmut fbold' }, '🔎 Buscar por N.° de servicio:'),
+        h('input', {
+          className: 'fi', style: { maxWidth: 220 }, placeholder: 'DD/MM/AA-NNN',
+          value: buscarNumero, onChange: e => { setBuscarNumero(e.target.value); setBuscarError(''); },
+          onKeyDown: e => { if (e.key === 'Enter') buscarServicioPorNumero(); }
+        }),
+        h('button', { className: 'btn bs btn-sm', onClick: buscarServicioPorNumero }, 'Buscar'),
+        buscarError && h('span', { className: 'txs', style: { color: 'var(--red)' } }, buscarError)
+      )
     ),
     h('div', { className: 'card mb4' },
       h('div', { className: 'cb', style: { display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' } },
@@ -22402,8 +22618,10 @@ function OperacionesTablero({ toast }) {
       contrato: contratos.find(x => x.id === viewing.contratoId),
       vehiculo: getVehiculosStore().find(x => x.id === viewing.vehiculoId),
       conductor: getConductores().find(x => x.id === viewing.conductorId),
+      onVerHistorial: () => setViendoHistorial(viewing),
       onClose: () => setViewing(null)
     }),
+    viendoHistorial && h(HistorialServicioModal, { servicio: viendoHistorial, onClose: () => setViendoHistorial(null) }),
     liquidando && h(LiquidarServicioModal, { servicio: liquidando, toast, onSave: datos => handleLiquidar(liquidando, datos), onClose: () => setLiquidando(null) }),
     asignando && h(AsignarServicioModal, { servicio: asignando, vehiculos, conductores, onSave: datos => handleAsignar(asignando, datos), onClose: () => setAsignando(null) })
   );

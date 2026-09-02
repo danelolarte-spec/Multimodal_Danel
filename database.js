@@ -408,6 +408,21 @@ ensureColumn('contratos', 'extracto_cliente_id', 'TEXT REFERENCES extracto_clien
 ensureColumn('servicios', 'campos', 'TEXT');
 ensureColumn('servicios', 'liquidacion', 'TEXT');
 ensureColumn('servicios', 'extracto_id', 'TEXT REFERENCES extractos(id)');
+// Numeración legible del servicio: DD/MM/AA-NNN, NNN consecutivo dentro del día de agendamiento
+// (servicios.fecha) — el id técnico (PK) no cambia, esto es solo para mostrar/buscar.
+ensureColumn('servicios', 'numero', 'TEXT');
+ensureColumn('servicios', 'ventana_ruta', 'TEXT');
+ensureColumn('servicios', 'referencia', 'TEXT');
+ensureColumn('servicios', 'usuarios', 'TEXT'); // JSON [{nombre, telefono, id}]
+ensureColumn('servicios', 'historial', 'TEXT'); // JSON [{fecha, usuario, accion, detalle}]
+// Ficha del contrato: contactos de negociación/contabilidad, consideraciones por área, y el
+// logístico responsable — en Operaciones, un usuario con rol "operaciones" solo ve los servicios
+// de los contratos donde es el logístico asignado (si el contrato no tiene logístico, lo ven todos).
+ensureColumn('contratos', 'contacto_negociador', 'TEXT');
+ensureColumn('contratos', 'contacto_contable', 'TEXT');
+ensureColumn('contratos', 'consideraciones_operativas', 'TEXT');
+ensureColumn('contratos', 'consideraciones_contables', 'TEXT');
+ensureColumn('contratos', 'consideraciones_comerciales', 'TEXT');
 ensureColumn('users', 'firma_url', 'TEXT');
 ensureColumn('extracto_contrato_historial', 'firma_url', 'TEXT');
 ensureColumn('extractos', 'tarifario_item_id', 'INTEGER REFERENCES tarifario_items(id)');

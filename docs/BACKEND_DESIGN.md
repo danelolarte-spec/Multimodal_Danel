@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14 — la carga masiva de tarifas por Excel y el portal móvil de conductor con su propia máquina de estados quedaron pendientes de una siguiente etapa. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -358,3 +358,57 @@ Antes, `Creado → Asignado` era un salto "de un clic" más de `SIGUIENTE_ESTADO
 ### 13.6 Filtros de selección múltiple (cliente, conductor, vehículo)
 
 `MultiSelectFiltro` (junto a `FG`) reemplaza los `<select>` de una sola opción por un desplegable de casillas: el botón muestra "Todos", el nombre de la única opción marcada, o "N seleccionados"; el popover lista todas las opciones con checkbox y un botón "✕ Limpiar selección". El estado del filtro pasa de un string (`'todos'` o un id) a un arreglo de ids (`[]` = todos), y el filtrado cambia de `x === valor` a `arreglo.length === 0 || arreglo.includes(valor)`. Se aplicó a los tres filtros de cliente/contrato, conductor y vehículo en el Tablero de calendario, en la lista de Servicios (que además ganó ahí filtros explícitos de conductor y vehículo — antes solo tenía cliente, y conductor/vehículo solo se alcanzaban por el buscador de texto libre) y en Producción y Rentabilidad.
+
+## 14. Numeración de servicio, jerarquía de campos, ruta gráfica, historial, línea de "ahora", búsqueda por número y ficha del contrato
+
+Esta sección cubre un lote de pedidos puntuales sobre Operaciones. Dos pedidos de ese mismo lote —la carga masiva de tarifas por Excel al crear un cliente, y el portal móvil de conductor con la máquina de estados accionada por el propio conductor (incluido el estado "Rechazado" con alerta a la logística)— **no están incluidos aquí**: son subsistemas por sí solos y quedaron deliberadamente para una siguiente etapa. Todo lo demás de la solicitud sí quedó implementado en esta pasada.
+
+### 14.1 Numeración legible del servicio (`numero`)
+
+Cada servicio ahora tiene, además de su `id` técnico (PK, usado en las rutas de la API — no puede contener `/`), un `numero` legible con formato `DD/MM/AA-NNN`, donde la fecha es la de agendamiento (`servicios.fecha`) y `NNN` es un consecutivo de 3 dígitos entre los servicios agendados ese mismo día.
+
+- **Backend** (`server.js`): nueva columna `servicios.numero TEXT` (`database.js`). `numeroServicio(fecha)` cuenta cuántos servicios ya existen con esa `fecha` y arma el siguiente consecutivo; se llama desde `POST /api/servicios` al crear.
+- **Mock** (`public/index.html`): `numeroServicioMock(fecha)` hace lo mismo contra `_serviciosStore`; se llama desde `addServicioStore`. `getServiciosStore()` completa `numero` en los 458 servicios de ejemplo originales (que no lo traían) con un contador por fecha, la primera vez que se cargan — mismo patrón ya usado para `origenGeo`/`destinoGeo` (ver §13.4).
+- El `numero` se muestra en vez del `id` en la columna de la tabla de Servicios y en el título de `VerServicioModal`/`HistorialServicioModal`; el buscador de servicios y la búsqueda del Tablero (§14.6) aceptan tanto `numero` como `id`.
+
+### 14.2 Campos nuevos del servicio y jerarquía de visualización
+
+Tres campos nuevos en `servicios`: `ventana_ruta` (texto libre, ej. "06:00 - 06:30"), `referencia` (texto libre, referencia/PO del cliente) y `usuarios` (JSON `[{nombre, telefono, id}]` — los pasajeros nominados del servicio, distintos de `pax`, que sigue siendo solo el conteo). Se agregaron a `database.js`, a los `cols` de `POST`/`PUT /api/servicios` en `server.js`, y a `servicioApiBody` en ambos componentes que hablan con la API real (`Servicios`, `OperacionesTablero`).
+
+`UsuariosField` (junto a `ParadasField`/`AddressField`) es el componente repetible de nombre+teléfono+ID para capturar `usuarios` en el formulario.
+
+`ServicioFormModal` y `VerServicioModal` se reordenaron para seguir la jerarquía solicitada: **Cliente → Fecha → Hora → Tipo de servicio → Origen → Destino → Ventana de ruta → Referencia → Anotaciones generales (antes "Observaciones") → Número de usuarios (antes solo "Pasajeros") → Usuarios (nombre+teléfono+ID) → Valor**. Los campos operativos que no pertenecen a esa jerarquía de negocio (estado, vehículo, conductor, campos personalizados del contrato) quedaron después, separados por un `divider`.
+
+### 14.3 Ventana gráfica de la ruta (`RutaMapaGrafico`)
+
+Pedido: ver la ruta del servicio "de forma gráfica" dentro de su ficha, incluyendo paradas adicionales — sin depender de una API key de mapas (el proyecto ya evita ese requisito para funcionalidad núcleo, ver `AddressField`). `RutaMapaGrafico` (junto a `RutaMapaLink`) dibuja un mini-mapa esquemático en SVG: proyecta las coordenadas de origen/paradas/destino (`origenGeo`/`campos[paradaId].geo`/`destinoGeo`) a un `viewBox` normalizado, traza una línea punteada entre los puntos en orden y marca cada uno con un círculo rotulado (O / 1, 2, 3... / D) más una leyenda de texto debajo. Si no hay ninguna coordenada disponible, muestra un mensaje en vez de un mapa vacío. Se usa en `VerServicioModal`, junto al enlace existente "Ver ruta en Google Maps" (`RutaMapaLink`), que sigue abriendo la ruta real cuando el usuario la necesita.
+
+### 14.4 Historial de cambios del servicio
+
+Nueva columna `servicios.historial TEXT` (JSON `[{fecha, usuario, accion, detalle}]`), con guardado automático — el usuario nunca lo edita a mano — en cada creación y cada cambio:
+
+- **Backend**: `actorNombre(req)` resuelve el nombre del usuario autenticado desde la sesión; `agregarHistorial(id, entrada)` hace `SELECT` + `UPDATE` del JSON dentro de una `db.transaction`. Se llama desde `POST /api/servicios` (entrada "Servicio creado") y desde `PUT /api/servicios/:id` (una entrada por cada actualización, con el detalle "Cambió estado a: X" cuando la actualización incluye `estado`, o "Editó el servicio" en otro caso).
+- **Mock**: `agregarHistorialMock(id, entrada)` hace el mismo `map` sobre `_serviciosStore`; se llama desde `updateServicio` y `addServicioStore`. Los servicios de ejemplo (los 458 originales y los generados para septiembre, ver §13.3) reciben una entrada semilla "Servicio creado" al cargarse, para que el historial nunca aparezca vacío en la demo.
+- **UI**: `HistorialServicioModal` (nuevo) lista las entradas más recientes primero. Se abre desde el botón "🕐 Ver historial" en `AccionesMenu` (nueva prop `onVerHistorial`) y desde el mismo botón dentro de `VerServicioModal` — ambos puntos de entrada están cableados en los dos lugares que usan estos modales (`Servicios` y `OperacionesTablero`), cada uno con su propio estado `viendoHistorial`.
+
+### 14.5 Línea de "ahora" en la vista de Día del Tablero
+
+`TableroGridHoras` calcula, solo cuando se está viendo un único día (`dias.length === 1`) y ese día es hoy, la posición vertical de la hora actual dentro de la grilla (usando la altura de fila fija `ROW_H`/`HEADER_H` que ya usa la grilla) y dibuja una línea roja horizontal con un punto y la hora en un pequeño rótulo, superpuesta con `position: absolute`. Un `setInterval` de 60s fuerza un re-render para que la línea avance sin que el usuario tenga que refrescar la página. La ficha del servicio (`VerServicioModal`) ya muestra, como sus primeros campos por la jerarquía de §14.2, exactamente lo pedido para la "previsualización" de día: fecha, hora, cliente, tipo de servicio y ruta — no se construyó un componente de previsualización aparte porque hacerlo hubiera duplicado esa misma información.
+
+### 14.6 Búsqueda por número de servicio en el Tablero
+
+Nuevo cuadro "🔎 Buscar por N.° de servicio" en la cabecera de `OperacionesTablero`: busca por `numero` o por `id` técnico entre los servicios visibles para el usuario (ver §14.8), cambia la vista a Día en la fecha donde está agendado (reutilizando `irADia`, la misma función que usa el clic en un día del Mes) y abre directamente su `VerServicioModal` con toda la información. Si no encuentra coincidencia, muestra un mensaje de error en línea en vez de fallar en silencio.
+
+### 14.7 Ficha del contrato: contactos y consideraciones
+
+Cinco columnas nuevas en `contratos` (`contacto_negociador`, `contacto_contable`, `consideraciones_operativas`, `consideraciones_contables`, `consideraciones_comerciales`), agregadas a `database.js` y a los `cols` de `POST`/`PUT /api/contratos` en `server.js`. `ContratoFormModal` gana los inputs correspondientes (los tres de consideraciones como `textarea`) y la ficha de cada contrato en el listado de `Contratos` los muestra condicionalmente (solo si tienen contenido, igual que el resto de campos opcionales de la ficha).
+
+Nota de alcance: el componente `Contratos` del frontend sigue siendo 100% mock (`updateContrato`/`addContratoStore` sobre `_contratosStore`, nunca llama a `/api/contratos`) — una brecha preexistente, no introducida en esta pasada. Las columnas y el `cols` del backend quedaron listos para cuando se conecte, pero por ahora estos campos nuevos solo persisten para los contratos de ejemplo/demo, igual que el resto de la ficha de contrato.
+
+### 14.8 Visibilidad de servicios por logístico asignado en Operaciones
+
+Pedido: que un usuario de Operaciones solo vea los servicios de los contratos donde está asignado como logístico. En vez de construir un sistema nuevo de asignación de usuarios a contratos, se reutilizó el campo de texto libre `logisticoNombre` que ya existía en el contrato (ver §11/12) — evita un endpoint `GET /api/users` y una UI de asignación que el pedido no alcanzaba a justificar por sí solo.
+
+`contratosVisiblesOperaciones(contratos)` (junto a `habilitadosParaOperar`/`conductoresHabilitados`) es la única fuente de verdad: si `USUARIO.rol !== 'operaciones'` devuelve la lista sin tocar; si es `'operaciones'`, filtra a los contratos sin logístico asignado (visibles para todos, para no bloquear contratos legados que nunca se configuraron) o cuyo `logisticoNombre` coincide exactamente con `USUARIO.nombre`. Se aplica en `Servicios` y `OperacionesTablero`, en dos capas: sobre la lista de `contratos` que ambos componentes arman (de donde salen también las opciones de los filtros y el selector del formulario) y, explícitamente, sobre la lista de servicios que se muestra (`filtered` en `Servicios`, `serviciosFiltrados` y la búsqueda por número en `OperacionesTablero`) — un servicio cuyo contrato no está en la lista visible no aparece, aunque el usuario intente encontrarlo por número.
+
+Esta es una comparación de texto exacta y sensible a mayúsculas contra `logisticoNombre`, no una relación por id — coherente con que el campo del contrato tampoco es una relación por id, sino texto libre.

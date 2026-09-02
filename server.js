@@ -626,7 +626,7 @@ app.get('/api/contratos', requireAuth, (req, res) => {
 
 app.post('/api/contratos', requireRole('admin', 'operaciones'), (req, res) => {
   const id = req.body.id || newId('k');
-  const cols = ['nombre','nit','tipo','estado','valor','logistico_nombre'];
+  const cols = ['nombre','nit','tipo','estado','valor','logistico_nombre','contacto_negociador','contacto_contable','consideraciones_operativas','consideraciones_contables','consideraciones_comerciales'];
   const row = Object.fromEntries(cols.map((c) => [c, req.body[c] ?? null]));
   row.id = id;
   row.estado = row.estado || 'Activo';
@@ -642,7 +642,7 @@ app.post('/api/contratos', requireRole('admin', 'operaciones'), (req, res) => {
 });
 
 app.put('/api/contratos/:id', requireRole('admin', 'operaciones'), (req, res) => {
-  const cols = ['nombre','nit','tipo','estado','valor','logistico_nombre'];
+  const cols = ['nombre','nit','tipo','estado','valor','logistico_nombre','contacto_negociador','contacto_contable','consideraciones_operativas','consideraciones_contables','consideraciones_comerciales'];
   const present = cols.filter((c) => c in req.body);
   if (present.length) db.prepare(`UPDATE contratos SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run({ ...req.body, id: req.params.id });
   res.json(opContratoConDetalle(db.prepare('SELECT * FROM contratos WHERE id=?').get(req.params.id)));
@@ -675,7 +675,24 @@ function servicioConDetalle(s) {
     destinoGeo: s.destino_geo ? JSON.parse(s.destino_geo) : null,
     campos: s.campos ? JSON.parse(s.campos) : {},
     liquidacion: s.liquidacion ? JSON.parse(s.liquidacion) : null,
+    usuarios: s.usuarios ? JSON.parse(s.usuarios) : [],
+    historial: s.historial ? JSON.parse(s.historial) : [],
   };
+}
+// DD/MM/AA-NNN, NNN consecutivo dentro de los servicios ya agendados para esa misma fecha.
+function numeroServicio(fecha) {
+  const [y, m, d] = fecha.split('-');
+  const n = db.prepare('SELECT COUNT(*) n FROM servicios WHERE fecha=?').get(fecha).n + 1;
+  return `${d}/${m}/${y.slice(2)}-${String(n).padStart(3, '0')}`;
+}
+function actorNombre(req) {
+  return db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre || 'Sistema';
+}
+function agregarHistorial(id, entrada) {
+  const s = db.prepare('SELECT historial FROM servicios WHERE id=?').get(id);
+  const hist = s && s.historial ? JSON.parse(s.historial) : [];
+  hist.push({ fecha: new Date().toISOString(), ...entrada });
+  db.prepare('UPDATE servicios SET historial=? WHERE id=?').run(JSON.stringify(hist), id);
 }
 app.get('/api/servicios', requireAuth, (req, res) => {
   let sql = 'SELECT * FROM servicios';
@@ -687,22 +704,36 @@ app.get('/api/servicios', requireAuth, (req, res) => {
 
 app.post('/api/servicios', requireRole('admin', 'operaciones'), (req, res) => {
   const id = req.body.id || newId('s');
-  const cols = ['fecha','hora','contrato_id','producto','vehiculo_id','conductor_id','origen','destino','estado','valor','pax','obs'];
+  const cols = ['fecha','hora','contrato_id','producto','vehiculo_id','conductor_id','origen','destino','estado','valor','pax','obs','ventana_ruta','referencia'];
   const row = Object.fromEntries(cols.map((c) => [c, req.body[c] ?? null]));
   row.id = id;
-  row.estado = row.estado || 'Pendiente';
-  db.prepare(`INSERT INTO servicios (id, ${cols.join(',')}, origen_geo, destino_geo, campos) VALUES (@id, ${cols.map((c) => '@' + c).join(',')}, @origen_geo, @destino_geo, @campos)`)
-    .run({ ...row, origen_geo: req.body.origenGeo ? JSON.stringify(req.body.origenGeo) : null, destino_geo: req.body.destinoGeo ? JSON.stringify(req.body.destinoGeo) : null, campos: req.body.campos ? JSON.stringify(req.body.campos) : null });
+  row.estado = row.estado || 'Creado';
+  row.numero = req.body.numero || numeroServicio(row.fecha);
+  const tx = db.transaction(() => {
+    db.prepare(`INSERT INTO servicios (id, numero, ${cols.join(',')}, origen_geo, destino_geo, campos, usuarios) VALUES (@id, @numero, ${cols.map((c) => '@' + c).join(',')}, @origen_geo, @destino_geo, @campos, @usuarios)`)
+      .run({ ...row, origen_geo: req.body.origenGeo ? JSON.stringify(req.body.origenGeo) : null, destino_geo: req.body.destinoGeo ? JSON.stringify(req.body.destinoGeo) : null, campos: req.body.campos ? JSON.stringify(req.body.campos) : null, usuarios: req.body.usuarios ? JSON.stringify(req.body.usuarios) : null });
+    agregarHistorial(id, { usuario: actorNombre(req), accion: 'Servicio creado', detalle: `Estado inicial: ${row.estado}` });
+  });
+  tx();
   res.status(201).json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(id)));
 });
 
 app.put('/api/servicios/:id', requireRole('admin', 'operaciones'), (req, res) => {
-  const cols = ['fecha','hora','contrato_id','producto','vehiculo_id','conductor_id','origen','destino','estado','valor','pax','obs'];
+  const cols = ['fecha','hora','contrato_id','producto','vehiculo_id','conductor_id','origen','destino','estado','valor','pax','obs','ventana_ruta','referencia'];
   const present = cols.filter((c) => c in req.body);
   const body = { ...req.body, id: req.params.id };
   if ('campos' in req.body) { present.push('campos'); body.campos = req.body.campos ? JSON.stringify(req.body.campos) : null; }
+  if ('usuarios' in req.body) { present.push('usuarios'); body.usuarios = req.body.usuarios ? JSON.stringify(req.body.usuarios) : null; }
   if ('liquidacion' in req.body) { present.push('liquidacion'); body.liquidacion = req.body.liquidacion ? JSON.stringify(req.body.liquidacion) : null; }
-  if (present.length) db.prepare(`UPDATE servicios SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+  const tx = db.transaction(() => {
+    if (present.length) db.prepare(`UPDATE servicios SET ${present.map((c) => `${c}=@${c}`).join(',')} WHERE id=@id`).run(body);
+    if ('estado' in req.body) {
+      agregarHistorial(req.params.id, { usuario: actorNombre(req), accion: `Cambió estado a: ${req.body.estado}`, detalle: req.body.vehiculo_id ? `Vehículo/conductor asignado` : '' });
+    } else if (present.length) {
+      agregarHistorial(req.params.id, { usuario: actorNombre(req), accion: 'Editó el servicio', detalle: present.filter(c => c !== 'campos' && c !== 'usuarios').join(', ') });
+    }
+  });
+  tx();
   res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));
 });
 
