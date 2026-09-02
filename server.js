@@ -282,7 +282,8 @@ function conductorConDetalle(c) {
   const docsObj = {};
   docs.forEach((d) => { docsObj[d.doc_tipo] = { ven: d.vencimiento, est: d.estado, archivoUrl: d.archivo_url, archivoNombre: d.archivo_nombre }; });
   const segHist = db.prepare('SELECT mes, fecha, estado as est, archivo_url as archivoUrl, archivo_nombre as archivoNombre FROM conductor_seg_social_historial WHERE conductor_id=? ORDER BY fecha DESC').all(c.id);
-  return { ...c, docs: docsObj, segHist, vehiculo: c.vehiculo_id, vencLic: c.venc_licencia, fechaVin: c.fecha_vin, activo: !!c.activo };
+  const { password_hash, ...cSinHash } = c;
+  return { ...cSinHash, docs: docsObj, segHist, vehiculo: c.vehiculo_id, vencLic: c.venc_licencia, fechaVin: c.fecha_vin, activo: !!c.activo, portalActivo: !!password_hash };
 }
 
 app.get('/api/conductores', requireAuth, (req, res) => {
@@ -686,6 +687,9 @@ function numeroServicio(fecha) {
   return `${d}/${m}/${y.slice(2)}-${String(n).padStart(3, '0')}`;
 }
 function actorNombre(req) {
+  if (req.session.conductorId) {
+    return db.prepare('SELECT nombre FROM conductores WHERE id=?').get(req.session.conductorId)?.nombre || 'Conductor';
+  }
   return db.prepare('SELECT nombre FROM users WHERE id=?').get(req.session.userId)?.nombre || 'Sistema';
 }
 function agregarHistorial(id, entrada) {
@@ -732,6 +736,86 @@ app.put('/api/servicios/:id', requireRole('admin', 'operaciones'), (req, res) =>
     } else if (present.length) {
       agregarHistorial(req.params.id, { usuario: actorNombre(req), accion: 'Editó el servicio', detalle: present.filter(c => c !== 'campos' && c !== 'usuarios').join(', ') });
     }
+  });
+  tx();
+  res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));
+});
+
+// ───────────────────────── Portal Conductor ─────────────────────────
+// Login propio del conductor (sesión separada de la de personal PIG — ver requireConductor). La
+// cédula (ya única en `conductores`) hace de usuario; la contraseña la activa Trámites/Operaciones
+// vía POST /api/conductores/:id/set-password. Mientras un conductor no tenga password_hash, no
+// puede iniciar sesión en el portal aunque esté activo.
+function requireConductor(req, res, next) {
+  if (!req.session.conductorId) return res.status(401).json({ error: 'No autenticado' });
+  next();
+}
+function conductorPublico(c) {
+  if (!c) return null;
+  const { password_hash, ...pub } = c;
+  return pub;
+}
+app.post('/api/conductor-auth/login', (req, res) => {
+  const { cedula, password } = req.body || {};
+  if (!cedula || !password) return res.status(400).json({ error: 'Faltan credenciales' });
+  const conductor = db.prepare('SELECT * FROM conductores WHERE cedula = ? AND activo = 1').get(cedula);
+  if (!conductor || !conductor.password_hash || !bcrypt.compareSync(password, conductor.password_hash)) {
+    return res.status(401).json({ error: 'Credenciales inválidas' });
+  }
+  req.session.conductorId = conductor.id;
+  res.json(conductorPublico(conductor));
+});
+app.post('/api/conductor-auth/logout', (req, res) => {
+  req.session.conductorId = null;
+  res.status(204).end();
+});
+app.get('/api/conductor-auth/me', requireConductor, (req, res) => {
+  const conductor = db.prepare('SELECT * FROM conductores WHERE id = ?').get(req.session.conductorId);
+  if (!conductor) return res.status(401).json({ error: 'No autenticado' });
+  res.json(conductorPublico(conductor));
+});
+// Activar/restablecer el acceso de un conductor al portal — lo hace personal de Trámites u
+// Operaciones (el conductor no se autorregistra); comunican la contraseña al conductor fuera de la
+// plataforma, igual que con cualquier credencial inicial.
+app.post('/api/conductores/:id/set-password', requireRole('admin', 'tramites', 'operaciones'), (req, res) => {
+  const { password } = req.body || {};
+  if (!password || password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+  const conductor = db.prepare('SELECT * FROM conductores WHERE id = ?').get(req.params.id);
+  if (!conductor) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare('UPDATE conductores SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), req.params.id);
+  res.status(204).end();
+});
+
+// Estados que el propio conductor puede activar desde el portal, y desde cuáles puede hacerlo —
+// distinto del flujo de Operaciones (que asigna/liquida): el conductor solo confirma su propio
+// recorrido, y puede rechazar una asignación antes de aceptarla.
+const ESTADO_TRANSICIONES_CONDUCTOR = {
+  'Asignado': ['Aceptado', 'Rechazado'],
+  'Aceptado': ['En Ruta'],
+  'En Ruta': ['En Sitio'],
+  'En Sitio': ['Realizando'],
+  'Realizando': ['Finalizado'],
+};
+app.get('/api/conductor/servicios', requireConductor, (req, res) => {
+  const rows = db.prepare(`
+    SELECT s.*, k.nombre AS cliente_nombre
+    FROM servicios s LEFT JOIN contratos k ON k.id = s.contrato_id
+    WHERE s.conductor_id = ?
+    ORDER BY s.fecha, s.hora
+  `).all(req.session.conductorId);
+  res.json(rows.map(servicioConDetalle));
+});
+app.put('/api/conductor/servicios/:id/estado', requireConductor, (req, res) => {
+  const nuevoEstado = req.body && req.body.estado;
+  const servicio = db.prepare('SELECT * FROM servicios WHERE id = ?').get(req.params.id);
+  if (!servicio) return res.status(404).json({ error: 'No encontrado' });
+  if (servicio.conductor_id !== req.session.conductorId) return res.status(403).json({ error: 'Este servicio no está asignado a tu usuario' });
+  const permitidos = ESTADO_TRANSICIONES_CONDUCTOR[servicio.estado] || [];
+  if (!permitidos.includes(nuevoEstado)) return res.status(400).json({ error: `No puedes pasar de "${servicio.estado}" a "${nuevoEstado}"` });
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE servicios SET estado = ? WHERE id = ?').run(nuevoEstado, req.params.id);
+    const accion = nuevoEstado === 'Rechazado' ? 'El conductor rechazó el servicio' : `Cambió estado a: ${nuevoEstado}`;
+    agregarHistorial(req.params.id, { usuario: actorNombre(req), accion, detalle: nuevoEstado === 'Rechazado' ? 'Requiere reasignación de conductor/vehículo' : '' });
   });
   tx();
   res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));

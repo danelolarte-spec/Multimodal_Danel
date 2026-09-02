@@ -426,6 +426,10 @@ ensureColumn('contratos', 'consideraciones_comerciales', 'TEXT');
 ensureColumn('users', 'firma_url', 'TEXT');
 ensureColumn('extracto_contrato_historial', 'firma_url', 'TEXT');
 ensureColumn('extractos', 'tarifario_item_id', 'INTEGER REFERENCES tarifario_items(id)');
+// Acceso del conductor al Portal Conductor (login propio, separado de `users`): la cédula ya es
+// única y hace de usuario; la contraseña la activa Trámites/Operaciones (ver POST
+// /api/conductores/:id/set-password) — mientras esté en NULL, ese conductor no puede iniciar sesión.
+ensureColumn('conductores', 'password_hash', 'TEXT');
 
 function seedIfEmpty() {
   const userCount = db.prepare('SELECT COUNT(*) n FROM users').get().n;
