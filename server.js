@@ -880,6 +880,18 @@ app.get('/api/liquidacion/ordenes/:id', requireAuth, (req, res) => {
   if (!orden) return res.status(404).json({ error: 'No encontrada' });
   res.json(ordenAprobacionConItems(orden));
 });
+// Un servicio que ya quedó incluido en una orden de aprobación (en cualquier estado salvo
+// Devuelto) queda "bloqueado" para edición: la liquidación ya se envió a revisión y no debería
+// cambiar por debajo mientras Director/Gerencia la están evaluando. Si Director lo devuelve, el
+// ítem pasa a Devuelto y por lo tanto sale de este listado — la logística puede volver a editarlo.
+app.get('/api/liquidacion/servicios-en-ordenes', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT oai.servicio_id, oai.orden_id, oa.numero AS orden_numero, oai.estado
+    FROM orden_aprobacion_items oai JOIN ordenes_aprobacion oa ON oa.id = oai.orden_id
+    WHERE oai.estado != 'Devuelto'
+  `).all();
+  res.json(rows);
+});
 
 // El Director de Operaciones decide, ítem por ítem: lo que aprueba pasa a integrar (o crea) la
 // orden de pago de Contabilidad; lo que devuelve queda marcado con el motivo para que la logística

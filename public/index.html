@@ -23010,7 +23010,9 @@ function LiquidacionServicios({ toast }) {
   const [enviando, setEnviando] = useState(false);
   const [ordenes, setOrdenes] = useState([]);
   const [serviciosReales, setServiciosReales] = useState([]);
+  const [bloqueados, setBloqueados] = useState([]); // [{servicio_id, orden_id, orden_numero, estado}] — ya en una orden activa
   const [verOrden, setVerOrden] = useState(null);
+  const [editando, setEditando] = useState(null); // servicio (crudo) al que se le está editando la liquidación
 
   const contratos = getContratosStore();
   const vehiculosTodos = getVehiculosStore();
@@ -23018,8 +23020,12 @@ function LiquidacionServicios({ toast }) {
   const refresh = () => {
     extApiGet('/api/liquidacion/ordenes').then(setOrdenes).catch(() => {});
     extApiGet('/api/servicios').then(setServiciosReales).catch(() => {});
+    extApiGet('/api/liquidacion/servicios-en-ordenes').then(setBloqueados).catch(() => {});
   };
   useEffect(() => { refresh(); }, []);
+
+  const bloqueoPorServicio = {};
+  bloqueados.forEach(b => { bloqueoPorServicio[b.servicio_id] = b; });
 
   const serviciosTodos = [
     ...getServiciosStore(),
@@ -23029,23 +23035,44 @@ function LiquidacionServicios({ toast }) {
   const filtrados = serviciosTodos.filter(s => s.estado === 'Liquidado' && s.fecha && s.fecha >= desde && s.fecha <= hasta && (!contratoId || s.contratoId === contratoId))
     .sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
 
-  const items = filtrados.map(s => {
+  // El snapshot lleva todo lo necesario para que Director/Gerencia puedan ver el detalle completo
+  // del servicio sin depender del store en vivo del navegador (ver §18.1 y §19 de BACKEND_DESIGN.md).
+  const construirItem = s => {
     const k = contratos.find(x => x.id === s.contratoId);
     const v = vehiculosTodos.find(x => x.id === s.vehiculoId);
     const cd = getConductores().find(x => x.id === s.conductorId);
     const proveedor = resolverProveedorVehiculo(v);
     const valorCliente = s.valor || 0;
     const valorProveedor = (s.liquidacion && s.liquidacion.valorAPagar) || 0;
+    const camposDef = (k && k.campos) || [];
+    const paradasCampoDef = camposDef.find(c => c.tipo === 'paradas');
+    const paradas = paradasCampoDef && s.campos ? (s.campos[paradasCampoDef.id] || []) : [];
     return {
       servicioId: s.id, servicioNumero: s.numero || s.id, fecha: s.fecha, hora: s.hora,
-      origen: s.origen, destino: s.destino, producto: s.producto ? productoLbl(s.producto) : '—',
+      origen: s.origen, destino: s.destino, origenGeo: s.origenGeo || null, destinoGeo: s.destinoGeo || null, paradas,
+      producto: s.producto ? productoLbl(s.producto) : '—',
       cliente: k ? k.nombre : '—',
+      ventanaRuta: s.ventanaRuta || '', referencia: s.referencia || '', obs: s.obs || '',
+      pax: s.pax || 0, usuarios: s.usuarios || [],
       valorCliente, valorProveedor,
       proveedorTipo: proveedor.tipo, proveedorNombre: proveedor.nombre, proveedorDocumento: proveedor.documento,
       vehiculoPlaca: v ? v.placa : '', conductorNombre: cd ? cd.nombre : '',
       margenPct: margenServicio(valorCliente, valorProveedor),
+      tarifaConfirmada: (s.liquidacion && s.liquidacion.tarifaConfirmada) || 0,
+      novedadesLiquidacion: (s.liquidacion && s.liquidacion.novedades) || '',
     };
+  };
+
+  // Un servicio ya incluido en una orden activa (no devuelta) no se puede volver a editar ni a
+  // reenviar — queda "bloqueado" hasta que Director lo devuelva (sale de /servicios-en-ordenes)
+  // o hasta que Gerencia lo autorice del todo (ya no debería tocarse).
+  const enviables = [], yaEnviados = [];
+  filtrados.forEach(s => {
+    const bloqueo = bloqueoPorServicio[s.id];
+    const entry = { servicio: s, item: construirItem(s), bloqueo };
+    (bloqueo ? yaEnviados : enviables).push(entry);
   });
+  const items = enviables.map(x => x.item);
 
   const ind = calcularIndicadoresLiquidacion(items);
   const puedeEnviar = !!contratoId && items.length > 0;
@@ -23065,24 +23092,33 @@ function LiquidacionServicios({ toast }) {
     } catch (e) { toast(e.message, 'danger'); } finally { setEnviando(false); }
   };
 
+  const handleGuardarLiquidacion = async datos => {
+    const s = editando;
+    try {
+      const k = contratos.find(x => x.id === s.contratoId);
+      if (k && k.extracto_cliente_id) await extApiSend('PUT', `/api/servicios/${s.id}`, datos);
+      else updateServicio(s.id, datos);
+      toast('Liquidación actualizada', 'success');
+      setEditando(null);
+      refresh();
+    } catch (e) { toast(e.message, 'danger'); }
+  };
+
+  // La relación que se envía al cliente no debe mostrar lo que se le paga al proveedor ni el
+  // margen — es información interna (ver §19 de BACKEND_DESIGN.md).
   const filaExcel = it => ({
     'N.º servicio': it.servicioNumero, 'Fecha': it.fecha, 'Hora': it.hora, 'Cliente': it.cliente,
     'Producto': it.producto, 'Origen': it.origen, 'Destino': it.destino,
     'Placa': it.vehiculoPlaca, 'Conductor': it.conductorNombre,
-    'Tipo de proveedor': it.proveedorTipo, 'Proveedor': it.proveedorNombre,
-    'Valor a facturar al cliente': it.valorCliente, 'Valor a pagar al proveedor': it.valorProveedor,
-    'Margen (%)': Number(it.margenPct.toFixed(1)),
+    'Valor a facturar al cliente': it.valorCliente,
   });
   const generarExcel = () => {
     if (!window.XLSX) { alert('La librería de Excel no cargó. Verifica tu conexión a internet.'); return; }
     if (items.length === 0) { alert('No hay servicios liquidados en el rango y filtros seleccionados'); return; }
     const wb = window.XLSX.utils.book_new();
     const wsResumen = window.XLSX.utils.json_to_sheet([
+      { Indicador: 'Total de servicios', Valor: items.length },
       { Indicador: 'Total a facturar al cliente', Valor: ind.totalFacturarCliente },
-      { Indicador: 'Total a pagar a Propios', Valor: ind.totalPagarPropios },
-      { Indicador: 'Total a pagar a Aliados', Valor: ind.totalPagarAliados },
-      { Indicador: 'Total a pagar a Afiliados', Valor: ind.totalPagarAfiliados },
-      { Indicador: 'Margen global (%)', Valor: Number(ind.margenGlobalPct.toFixed(1)) },
     ]);
     window.XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
     const wsDetalle = window.XLSX.utils.json_to_sheet(items.map(filaExcel));
@@ -23129,20 +23165,21 @@ function LiquidacionServicios({ toast }) {
     ),
 
     h('div', { className: 'card mb4' },
-      h('div', { className: 'ch' }, h('span', { className: 'ct' }, `Servicios liquidados (${items.length})`)),
+      h('div', { className: 'ch' }, h('span', { className: 'ct' }, `Servicios liquidados por enviar (${items.length})`)),
       h('div', { className: 'cb tw' },
-        items.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin servicios liquidados en el rango y filtros seleccionados')) :
+        enviables.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin servicios liquidados en el rango y filtros seleccionados')) :
         h('table', null,
-          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Hora', 'Origen → Destino', 'Placa', 'Proveedor', 'Valor cliente', 'Valor proveedor', 'Margen'].map(x => h('th', { key: x }, x)))),
-          h('tbody', null, items.map(it => h('tr', { key: it.servicioId },
-            h('td', { className: 'tmono txs' }, it.servicioNumero),
-            h('td', null, it.fecha), h('td', null, it.hora),
-            h('td', { className: 'tsr' }, `${it.origen} → ${it.destino}`),
-            h('td', null, it.vehiculoPlaca ? h('span', { className: 'placa' }, it.vehiculoPlaca) : '—'),
-            h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[it.proveedorTipo]}` }, it.proveedorTipo), h('div', { className: 'txs tmut' }, it.proveedorNombre)),
-            h('td', { className: 'fbold' }, fmt(it.valorCliente)),
-            h('td', null, fmt(it.valorProveedor)),
-            h('td', null, h(MargenValor, { pct: it.margenPct }))
+          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Hora', 'Origen → Destino', 'Placa', 'Proveedor', 'Valor cliente', 'Valor proveedor', 'Margen', ''].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, enviables.map(x => h('tr', { key: x.item.servicioId },
+            h('td', { className: 'tmono txs' }, x.item.servicioNumero),
+            h('td', null, x.item.fecha), h('td', null, x.item.hora),
+            h('td', { className: 'tsr' }, `${x.item.origen} → ${x.item.destino}`),
+            h('td', null, x.item.vehiculoPlaca ? h('span', { className: 'placa' }, x.item.vehiculoPlaca) : '—'),
+            h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[x.item.proveedorTipo]}` }, x.item.proveedorTipo), h('div', { className: 'txs tmut' }, x.item.proveedorNombre)),
+            h('td', { className: 'fbold' }, fmt(x.item.valorCliente)),
+            h('td', null, fmt(x.item.valorProveedor)),
+            h('td', null, h(MargenValor, { pct: x.item.margenPct })),
+            h('td', null, h('button', { className: 'bi', title: 'Editar liquidación', onClick: () => setEditando(x.servicio) }, '✎'))
           )))
         )
       ),
@@ -23152,6 +23189,23 @@ function LiquidacionServicios({ toast }) {
           h('input', { className: 'fi', style: { maxWidth: 280 }, placeholder: 'correo@cliente.com, otro@cliente.com', value: correo, onChange: e => setCorreo(e.target.value) }),
           h('button', { className: 'btn bs', onClick: enviarPorCorreo }, '✉️ Preparar envío por correo'),
           h('button', { className: 'btn bsu', disabled: !puedeEnviar || enviando, onClick: enviarOrden }, enviando ? 'Enviando…' : '📤 Enviar orden de aprobación al Director de Operaciones')
+        )
+      )
+    ),
+
+    yaEnviados.length > 0 && h('div', { className: 'card mb4' },
+      h('div', { className: 'ch' }, h('span', { className: 'ct' }, `Servicios ya en una orden de aprobación (${yaEnviados.length})`)),
+      h('div', { className: 'cb tw' },
+        h('div', { className: 'txs tmut mb2' }, 'No se pueden editar ni reenviar mientras estén en una orden activa — si Dirección devuelve el servicio, vuelve a aparecer arriba para editarlo y reenviarlo.'),
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Origen → Destino', 'Orden', 'Estado en la orden'].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, yaEnviados.map(x => h('tr', { key: x.item.servicioId },
+            h('td', { className: 'tmono txs' }, x.item.servicioNumero),
+            h('td', null, x.item.fecha),
+            h('td', { className: 'tsr' }, `${x.item.origen} → ${x.item.destino}`),
+            h('td', { className: 'tmono txs' }, x.bloqueo.orden_numero),
+            h('td', null, h('span', { className: `badge ${ITEM_ESTADO_BADGE[x.bloqueo.estado]}` }, x.bloqueo.estado))
+          )))
         )
       )
     ),
@@ -23175,6 +23229,7 @@ function LiquidacionServicios({ toast }) {
       )
     ),
     verOrden && h(OrdenAprobacionDetalleModal, { ordenId: verOrden, soloLectura: true, toast: toast, onClose: () => setVerOrden(null) }),
+    editando && h(LiquidarServicioModal, { servicio: editando, toast: toast, onSave: handleGuardarLiquidacion, onClose: () => setEditando(null) }),
     mailModal && h(EnviarCorreoModal, { correo: mailModal.correo, asunto: mailModal.asunto, cuerpo: mailModal.cuerpo, toast: toast, onClose: () => setMailModal(null) })
   );
 }
@@ -23182,11 +23237,69 @@ function LiquidacionServicios({ toast }) {
 // Detalle de una orden de aprobación: indicadores globales + tabla por servicio. En modo activo
 // (Director de Operaciones) cada ítem "Pendiente" se marca para aprobar o devolver (con motivo) y
 // "Guardar decisión" envía todo junto; en modo soloLectura (vista desde Liquidación) es solo consulta.
+// Detalle completo de un servicio dentro de una orden (de aprobación o de pago), leído solo del
+// snapshot — Director y Gerencia no tienen por qué depender del store en vivo del navegador (el
+// servicio puede ser de la demo, o haber cambiado desde que se envió la orden) para ver toda la
+// información antes de decidir. Misma jerarquía de campos que VerServicioModal (ver §14.2).
+function ItemLiquidacionDetalleModal({ item, onClose }) {
+  const s = item.snapshot;
+  const usuarios = s.usuarios || [];
+  return h(Modal, { open: true, onClose, title: `👁 Servicio ${item.servicio_numero}`, lg: true },
+    h('div', { className: 'mb' },
+      h('div', { className: 'flex gap2 mb3' },
+        h('span', { className: `badge ${ITEM_ESTADO_BADGE[item.estado] || 'bgr'}` }, item.estado),
+        s.producto && h('span', { className: 'badge bgr' }, s.producto)
+      ),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Cliente', value: s.cliente || '—' }),
+        h(IField, { label: 'Fecha del servicio', value: s.fecha || '—' }),
+        h(IField, { label: 'Hora', value: s.hora || '—' }),
+      ),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Origen', value: s.origen || '—' }),
+        h(IField, { label: 'Destino', value: s.destino || '—' }),
+        h(IField, { label: 'Número de usuarios', value: s.pax || '—' }),
+      ),
+      (s.ventanaRuta || s.referencia) && h('div', { className: 'g2c mb2' },
+        h(IField, { label: 'Ventana de ruta', value: s.ventanaRuta || '—' }),
+        h(IField, { label: 'Referencia', value: s.referencia || '—' }),
+      ),
+      s.obs && h('div', { className: 'mb2' }, h(IField, { label: 'Anotaciones generales', value: s.obs })),
+      usuarios.length > 0 && h('div', { className: 'mb2' },
+        h('div', { className: 'if-label' }, `Usuarios (${usuarios.length})`),
+        usuarios.map((u, i) => h('div', { key: i, className: 'if-val' }, `👤 ${u.nombre || '—'}${u.telefono ? ' · 📞 ' + u.telefono : ''}`))
+      ),
+      h('div', { className: 'divider' }),
+      h(RutaMapaGrafico, { origenGeo: s.origenGeo, destinoGeo: s.destinoGeo, origenTxt: s.origen, destinoTxt: s.destino, paradas: s.paradas || [] }),
+      h(RutaMapaLink, { origenGeo: s.origenGeo, destinoGeo: s.destinoGeo }),
+      h('div', { className: 'divider' }),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Vehículo', value: s.vehiculoPlaca || 'Sin asignar' }),
+        h(IField, { label: 'Conductor', value: s.conductorNombre || 'Sin asignar' }),
+        h(IField, { label: 'Tipo de proveedor', value: h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[s.proveedorTipo]}` }, s.proveedorTipo) }),
+      ),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Beneficiario del pago', value: s.proveedorNombre || '—' }),
+        h(IField, { label: 'Valor a facturar al cliente', value: h('span', { className: 'fbold' }, fmt(s.valorCliente)) }),
+        h(IField, { label: 'Valor a pagar al proveedor', value: fmt(s.valorProveedor) }),
+      ),
+      h('div', { className: 'g2c mb2' },
+        h(IField, { label: 'Margen', value: h(MargenValor, { pct: s.margenPct }) }),
+        h(IField, { label: 'Tarifa confirmada en liquidación', value: fmt(s.tarifaConfirmada) }),
+      ),
+      s.novedadesLiquidacion && h('div', { className: 'mb2' }, h(IField, { label: 'Novedades de la liquidación', value: s.novedadesLiquidacion })),
+      item.motivo_devolucion && h('div', { className: 'al al-danger' }, `Motivo de devolución (${item.devuelto_etapa}): ${item.motivo_devolucion}`),
+      h('div', { className: 'flex gap2 mt3' }, h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'))
+    )
+  );
+}
+
 function OrdenAprobacionDetalleModal({ ordenId, soloLectura, onClose, onDecidido, toast }) {
   const [orden, setOrden] = useState(null);
   const [seleccion, setSeleccion] = useState({});
   const [motivos, setMotivos] = useState({});
   const [guardando, setGuardando] = useState(false);
+  const [verItem, setVerItem] = useState(null);
 
   const cargar = () => extApiGet(`/api/liquidacion/ordenes/${ordenId}`).then(setOrden).catch(e => toast && toast(e.message, 'danger'));
   useEffect(() => { cargar(); }, [ordenId]);
@@ -23234,10 +23347,11 @@ function OrdenAprobacionDetalleModal({ ordenId, soloLectura, onClose, onDecidido
       ),
       h('div', { className: 'tw' },
         h('table', null,
-          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Origen → Destino', 'Proveedor', 'Cliente $', 'Proveedor $', 'Margen', 'Estado', !soloLectura && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
+          h('thead', null, h('tr', null, ['', 'N.º', 'Fecha', 'Origen → Destino', 'Proveedor', 'Cliente $', 'Proveedor $', 'Margen', 'Estado', !soloLectura && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
           h('tbody', null, items.map(it => {
             const s = it.snapshot;
             return h('tr', { key: it.id },
+              h('td', null, h('button', { className: 'bi', title: 'Ver detalle', onClick: () => setVerItem(it) }, '👁')),
               h('td', { className: 'tmono txs' }, it.servicio_numero),
               h('td', null, s.fecha),
               h('td', { className: 'tsr' }, `${s.origen} → ${s.destino}`),
@@ -23262,7 +23376,8 @@ function OrdenAprobacionDetalleModal({ ordenId, soloLectura, onClose, onDecidido
       h('div', { className: 'flex gap2 mt3' },
         h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'),
         !soloLectura && pendientes.length > 0 && h('button', { className: 'btn bp', disabled: guardando, onClick: enviarDecision }, guardando ? 'Guardando…' : '✓ Guardar decisión')
-      )
+      ),
+      verItem && h(ItemLiquidacionDetalleModal, { item: verItem, onClose: () => setVerItem(null) })
     )
   );
 }
@@ -23275,6 +23390,7 @@ function OrdenPagoDetalleModal({ ordenPagoId, soloLectura, onClose, onDecidido, 
   const [devolver, setDevolver] = useState({});
   const [motivos, setMotivos] = useState({});
   const [guardando, setGuardando] = useState(false);
+  const [verItem, setVerItem] = useState(null);
 
   const cargar = () => extApiGet(`/api/contabilidad/ordenes-pago/${ordenPagoId}`).then(setOp).catch(e => toast && toast(e.message, 'danger'));
   useEffect(() => { cargar(); }, [ordenPagoId]);
@@ -23331,10 +23447,11 @@ function OrdenPagoDetalleModal({ ordenPagoId, soloLectura, onClose, onDecidido, 
       h('div', { className: 'divider' }),
       h('div', { className: 'tw' },
         h('table', null,
-          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Tipo', 'Beneficiario', 'Valor a pagar', 'Estado', !soloLectura && pendienteDecision && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
+          h('thead', null, h('tr', null, ['', 'N.º', 'Fecha', 'Tipo', 'Beneficiario', 'Valor a pagar', 'Estado', !soloLectura && pendienteDecision && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
           h('tbody', null, items.map(it => {
             const s = it.snapshot;
             return h('tr', { key: it.id },
+              h('td', null, h('button', { className: 'bi', title: 'Ver detalle', onClick: () => setVerItem(it) }, '👁')),
               h('td', { className: 'tmono txs' }, it.servicio_numero),
               h('td', null, s.fecha),
               h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[s.proveedorTipo]}` }, s.proveedorTipo)),
@@ -23358,7 +23475,8 @@ function OrdenPagoDetalleModal({ ordenPagoId, soloLectura, onClose, onDecidido, 
         h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'),
         op.estado === 'Aprobada' && h('button', { className: 'btn bp', onClick: descargarArchivoPlano }, '⬇ Descargar archivo plano'),
         !soloLectura && pendienteDecision && h('button', { className: 'btn bsu', disabled: guardando, onClick: enviarDecision }, guardando ? 'Guardando…' : '✓ Dar V°B° / guardar decisión')
-      )
+      ),
+      verItem && h(ItemLiquidacionDetalleModal, { item: verItem, onClose: () => setVerItem(null) })
     )
   );
 }
@@ -24985,11 +25103,74 @@ function ConductorServicioCard({ s, onClick }) {
 
 const CONDUCTOR_ESTADOS_TERMINALES = ['Finalizado', 'Liquidado', 'Liquidado Confirmado', 'Cancelado', 'Rechazado'];
 
+const CONDUCTOR_MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const CONDUCTOR_DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+// Mes en calendario de los servicios del conductor (asignados o ya hechos, cualquier estado) —
+// tocar un día lleva a la agenda de ese día (ver ConductorAgendaDia), como se pidió.
+function ConductorCalendarioMes({ mesRef, onMesChange, porFecha, onDiaClick }) {
+  const year = mesRef.getFullYear(), month = mesRef.getMonth();
+  const primerDia = new Date(year, month, 1);
+  const ultimoDia = new Date(year, month + 1, 0);
+  let startDow = primerDia.getDay(); startDow = startDow === 0 ? 6 : startDow - 1;
+  const diasEnMes = ultimoDia.getDate();
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const celdas = [];
+  for (let i = 0; i < startDow; i++) celdas.push(null);
+  for (let d = 1; d <= diasEnMes; d++) celdas.push(d);
+
+  return h('div', null,
+    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 } },
+      h('button', { onClick: () => onMesChange(new Date(year, month - 1, 1)), style: { background: '#16161d', border: '1px solid #2a2a33', color: '#fff', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' } }, '‹'),
+      h('div', { style: { color: '#fff', fontWeight: 700, fontSize: 14, textTransform: 'capitalize' } }, `${CONDUCTOR_MESES[month]} ${year}`),
+      h('button', { onClick: () => onMesChange(new Date(year, month + 1, 1)), style: { background: '#16161d', border: '1px solid #2a2a33', color: '#fff', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' } }, '›')
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4, marginBottom: 4 } },
+      CONDUCTOR_DOW.map(d => h('div', { key: d, style: { textAlign: 'center', fontSize: 10, color: '#5c5c66', fontWeight: 700 } }, d))
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4 } },
+      celdas.map((d, i) => {
+        if (!d) return h('div', { key: 'e' + i });
+        const fechaISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const svs = porFecha[fechaISO] || [];
+        const esHoy = fechaISO === hoyISO;
+        return h('div', {
+          key: d, onClick: () => onDiaClick(fechaISO),
+          style: {
+            aspectRatio: '1', borderRadius: 8, cursor: 'pointer', padding: 4,
+            background: svs.length > 0 ? 'rgba(255,127,0,.12)' : '#16161d',
+            border: esHoy ? '2px solid #FF7F00' : '1px solid #2a2a33',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+          }
+        },
+          h('span', { style: { fontSize: 12, fontWeight: esHoy ? 800 : 600, color: esHoy ? '#FF9A2E' : '#d4d4dc' } }, d),
+          svs.length > 0 && h('span', { style: { fontSize: 9, fontWeight: 700, color: '#FF7F00', background: 'rgba(255,127,0,.18)', borderRadius: 8, padding: '0 5px' } }, svs.length)
+        );
+      })
+    )
+  );
+}
+// Agenda de un día del calendario — mismas tarjetas que Hoy/Programados, filtradas a esa fecha.
+function ConductorAgendaDia({ fecha, servicios, onVolver, onVerServicio }) {
+  const svs = servicios.slice().sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+  return h('div', null,
+    h('button', {
+      onClick: onVolver,
+      style: { background: 'none', border: 'none', color: '#FF9A2E', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginBottom: 10, padding: 0 }
+    }, '← Volver al calendario'),
+    h('div', { style: { color: '#fff', fontWeight: 700, fontSize: 14, marginBottom: 10 } }, fecha),
+    svs.length === 0
+      ? h('div', { style: { textAlign: 'center', color: '#5c5c66', padding: '40px 0', fontSize: 13 } }, 'No hay servicios este día')
+      : svs.map(s => h(ConductorServicioCard, { key: s.id, s, onClick: () => onVerServicio(s) }))
+  );
+}
+
 function ConductorApp({ conductor, onLogout, toast }) {
   const [tab, setTab] = React.useState('hoy');
   const [list, setList] = React.useState([]);
   const [cargando, setCargando] = React.useState(true);
   const [viendo, setViendo] = React.useState(null);
+  const [mesRef, setMesRef] = React.useState(new Date());
+  const [diaAgenda, setDiaAgenda] = React.useState(null);
 
   const refresh = React.useCallback(() => {
     setCargando(true);
@@ -25004,7 +25185,11 @@ function ConductorApp({ conductor, onLogout, toast }) {
   const historial = list.filter(s => CONDUCTOR_ESTADOS_TERMINALES.includes(s.estado)).sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora));
   const pendientesAceptar = hoy.filter(s => s.estado === 'Asignado').length + programados.filter(s => s.estado === 'Asignado').length;
 
-  const visibles = tab === 'hoy' ? hoy : tab === 'programados' ? programados : historial;
+  const porFecha = {};
+  list.forEach(s => { if (!s.fecha) return; (porFecha[s.fecha] = porFecha[s.fecha] || []).push(s); });
+
+  const cambiarTab = v => { setTab(v); setDiaAgenda(null); };
+  const visibles = tab === 'hoy' ? hoy : tab === 'programados' ? programados : tab === 'historial' ? historial : [];
 
   return h('div', { style: { minHeight: '100vh', background: '#0a0a0f', display: 'flex', flexDirection: 'column' } },
     h('div', { style: { position: 'sticky', top: 0, zIndex: 10, background: '#110B79', padding: '16px 18px', boxShadow: '0 2px 10px rgba(0,0,0,.3)' } },
@@ -25020,14 +25205,18 @@ function ConductorApp({ conductor, onLogout, toast }) {
     pendientesAceptar > 0 && h('div', { style: { background: '#7a3d05', color: '#fff', textAlign: 'center', padding: '8px 12px', fontSize: 12, fontWeight: 700 } },
       `⚠ Tienes ${pendientesAceptar} servicio(s) por aceptar o rechazar`),
     h('div', { style: { display: 'flex', background: '#16161d', borderBottom: '1px solid #2a2a33' } },
-      [['hoy', `Hoy (${hoy.length})`], ['programados', `Programados (${programados.length})`], ['historial', `Historial`]].map(([v, lbl]) =>
+      [['hoy', `Hoy (${hoy.length})`], ['programados', `Programados (${programados.length})`], ['calendario', 'Calendario'], ['historial', 'Historial']].map(([v, lbl]) =>
         h('button', {
-          key: v, onClick: () => setTab(v),
+          key: v, onClick: () => cambiarTab(v),
           style: { flex: 1, padding: '12px 6px', background: 'none', border: 'none', borderBottom: tab === v ? '2px solid #FF7F00' : '2px solid transparent', color: tab === v ? '#FF7F00' : '#8b8b96', fontWeight: 700, fontSize: 12, cursor: 'pointer' }
         }, lbl))
     ),
     h('div', { style: { flex: 1, padding: '16px 14px', maxWidth: 560, width: '100%', margin: '0 auto', boxSizing: 'border-box' } },
       cargando ? h('div', { style: { textAlign: 'center', color: '#8b8b96', padding: '40px 0' } }, 'Cargando…')
+        : tab === 'calendario'
+        ? (diaAgenda
+            ? h(ConductorAgendaDia, { fecha: diaAgenda, servicios: porFecha[diaAgenda] || [], onVolver: () => setDiaAgenda(null), onVerServicio: setViendo })
+            : h(ConductorCalendarioMes, { mesRef, onMesChange: setMesRef, porFecha, onDiaClick: setDiaAgenda }))
         : visibles.length === 0 ? h('div', { style: { textAlign: 'center', color: '#5c5c66', padding: '40px 0', fontSize: 13 } }, 'No hay servicios aquí')
         : visibles.map(s => h(ConductorServicioCard, { key: s.id, s, onClick: () => setViendo(s) }))
     ),

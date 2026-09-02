@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. El flujo real de Liquidación → Aprobaciones (Director de Operaciones) → Contabilidad (V°B° de Gerencia + archivo plano de pago), con indicadores financieros globales y por servicio, está en §18. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. El flujo real de Liquidación → Aprobaciones (Director de Operaciones) → Contabilidad (V°B° de Gerencia + archivo plano de pago), con indicadores financieros globales y por servicio, está en §18. El calendario del Portal Conductor, la edición y bloqueo de la liquidación desde el módulo mientras está en una orden activa, la relación de cobro al cliente sin datos internos del proveedor, y el detalle completo de un servicio para Director/Gerencia están en §19. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -564,3 +564,71 @@ plano — no se creó un rol "contable" aparte porque el pedido no distinguía e
 propietario) y genera un `.txt` delimitado por `|` (`TIPO|DOCUMENTO|BENEFICIARIO|N_SERVICIOS|VALOR_A_PAGAR`,
 una fila por beneficiario) vía un `Blob` descargado directamente en el navegador — sin endpoint
 nuevo en el backend, ya que toda la información ya está cargada en el detalle que ve Gerencia/Contabilidad.
+
+## 19. Calendario del conductor, edición/bloqueo de la liquidación, relación de cobro sin datos internos y detalle completo para Director/Gerencia
+
+### 19.1 Calendario del Portal Conductor
+
+Pedido: que el conductor vea sus servicios (asignados o ya hechos) en un calendario mensual, y que
+tocar un día lo lleve a la agenda de ese día. `ConductorApp` gana una cuarta pestaña, **Calendario**
+— `ConductorCalendarioMes` dibuja una grilla de 7 columnas del mes en curso (con navegación ‹/›),
+donde cada día que tiene al menos un servicio (`porFecha[fechaISO]`, agrupando `list` completa —
+cualquier estado, no solo los activos) se resalta y muestra un contador; el día de hoy lleva un
+borde ámbar. Tocar un día llama a `onDiaClick(fechaISO)`, que cambia a `ConductorAgendaDia`: la
+misma tarjeta (`ConductorServicioCard`) que usan Hoy/Programados/Historial, filtrada a esa fecha y
+ordenada por hora, con un botón "← Volver al calendario". Cambiar de pestaña (`cambiarTab`) limpia
+el día seleccionado para no quedar atrapado en la agenda al volver a Calendario.
+
+### 19.2 Edición de la liquidación desde el módulo, bloqueada mientras está en una orden activa
+
+Antes, la única forma de editar `s.liquidacion` era `LiquidarServicioModal` desde Servicios/Tablero.
+Pedido: que la logística también pueda editarla directamente desde Liquidación (donde ya filtró los
+servicios liquidados por cliente y rango), pero que deje de poder hacerlo — ni el servicio ni la
+liquidación — en cuanto la orden de aprobación ya se envió, salvo que Dirección devuelva ese
+servicio puntual.
+
+- **Editar**: cada fila de "Servicios liquidados por enviar" tiene un botón "✎" que abre
+  `LiquidarServicioModal` con el servicio original (`x.servicio`, no el snapshot calculado);
+  `handleGuardarLiquidacion` guarda por el mismo camino mock-vs-real que el resto del módulo
+  (`updateServicio` o `PUT /api/servicios/:id`, según si el contrato es de Comercial).
+- **Bloqueo**: nuevo `GET /api/liquidacion/servicios-en-ordenes` devuelve, para todo
+  `orden_aprobacion_items` con `estado != 'Devuelto'` (es decir, `Pendiente`/`Aprobado`/`Autorizado`
+  — cualquier ítem todavía "vivo" en una orden), su `servicio_id` y en qué orden/estado está.
+  `LiquidacionServicios` separa los servicios liquidados filtrados en `enviables` (sin bloqueo — se
+  pueden editar y son los que se envían) y `yaEnviados` (con bloqueo — de solo lectura, en una tabla
+  aparte que muestra en qué orden están y su estado, con la nota de que Dirección tiene que
+  devolverlos para poder tocarlos de nuevo). Los indicadores globales y el botón de envío usan
+  únicamente `enviables` — un servicio que ya está en una orden activa no puede volver a incluirse en
+  una nueva mientras siga así, evitando enviarlo dos veces.
+- Cuando Dirección devuelve un ítem (`devolverItems` en `PUT /api/liquidacion/ordenes/:id/decidir`),
+  su `orden_aprobacion_items.estado` pasa a `Devuelto` y por lo tanto sale de
+  `/servicios-en-ordenes` — el servicio reaparece automáticamente en "Servicios liquidados por
+  enviar" la próxima vez que la logística recargue el módulo, listo para editar y reenviar en una
+  orden nueva.
+
+### 19.3 La relación de cobro al cliente ya no expone datos internos
+
+El Excel que genera `LiquidacionServicios` para enviarle al cliente (`filaExcel`/`generarExcel`)
+tenía "Valor a pagar al proveedor" y "Margen (%)" — información puramente interna de rentabilidad
+que no le corresponde ver al cliente. Se quitaron esas dos columnas (y también "Tipo de proveedor"/
+"Proveedor", que ya no aplican sin el contexto del margen); la hoja de detalle del Excel del cliente
+ahora solo trae identificación del servicio, ruta, vehículo/conductor y el valor a facturar. Los
+indicadores internos (pago a proveedor, márgenes) se siguen viendo en la pantalla de Liquidación y en
+las vistas de Director/Gerencia — nunca en lo que sale hacia el cliente.
+
+### 19.4 Detalle completo de un servicio para Director y Gerencia
+
+Pedido: que Director y Gerente puedan hacer clic sobre un servicio, dentro de la orden que están
+revisando, para ver toda su información — no solo la fila resumida de la tabla.
+`ItemLiquidacionDetalleModal` (nuevo, compartido entre `OrdenAprobacionDetalleModal` y
+`OrdenPagoDetalleModal`) reconstruye la misma jerarquía compacta de `VerServicioModal` (cliente,
+fecha, hora, origen, destino, ventana de ruta, referencia, anotaciones, usuarios, ventana gráfica de
+la ruta, vehículo/conductor, valores y margen, más el motivo de devolución si lo tiene) — pero
+leyendo únicamente el `snapshot` que ya viaja en el ítem de la orden, no el store en vivo del
+navegador (ver §18.1: el servicio de origen puede ser de la demo o haber cambiado desde que se
+envió). Cada fila de ambas tablas ganó una primera columna con un botón "👁" que abre este modal; para
+que el snapshot alcance a mostrar todo eso, `construirItem` (en `LiquidacionServicios`) se amplió más
+allá de los campos que ya usaban los indicadores — ahora también guarda `origenGeo`/`destinoGeo`/
+`paradas` (para el mapa), `ventanaRuta`, `referencia`, `obs`, `pax`, `usuarios`, y
+`tarifaConfirmada`/`novedadesLiquidacion` de la liquidación — todo lo que se necesita para que el
+detalle sea realmente completo y no una versión reducida.
