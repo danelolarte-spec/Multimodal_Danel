@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. El flujo real de Liquidación → Aprobaciones (Director de Operaciones) → Contabilidad (V°B° de Gerencia + archivo plano de pago), con indicadores financieros globales y por servicio, está en §18. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -454,3 +454,113 @@ Endpoints nuevos en `server.js`:
 **Ruteo.** `/conductor` (cualquier subruta) no pasa por `AuthGate` (el shell de personal): el IIFE final que monta React revisa `window.location.pathname` — igual que ya hacía para `/verificar/:token` (`VerificacionPublica`) — y monta `ConductorAuthGate` en su lugar. El catch-all `app.get('*', ...)` de `server.js` ya servía `index.html` para cualquier ruta no-API, así que no hizo falta tocar el backend para que `/conductor` cargue.
 
 **UI.** `ConductorLoginScreen` (cédula + contraseña, tema oscuro consistente con `LoginScreen`/`HomeERP`) → `ConductorAuthGate` (verifica `/api/conductor-auth/me`, gestiona login/logout) → `ConductorApp`: cabecera fija con nombre del conductor y vehículo asignado, un banner si tiene servicios pendientes de aceptar/rechazar, y tres pestañas — **Hoy** (fecha de hoy, estados no terminales), **Programados** (otras fechas, no terminales) y **Historial** (`Finalizado`/`Liquidado`/`Liquidado Confirmado`/`Cancelado`/`Rechazado`, sin importar la fecha). Cada servicio es una tarjeta (`ConductorServicioCard`) con borde de color por estado; al tocarla abre `ConductorServicioDetalle` (reutiliza `Modal`, `RutaMapaGrafico` y `RutaMapaLink`) con la misma jerarquía de campos que el resto de la plataforma (cliente/fecha/hora/origen/destino/ventana de ruta/usuarios) y, al final, el botón de acción que corresponde al estado actual: "✓ Aceptar servicio" + "✕ Rechazar servicio" (con confirmación) cuando está "Asignado", o un único botón de avance ("🚗 Salir hacia el origen", "📍 Llegué al punto de origen", "▶ El usuario abordó — iniciar servicio", "🏁 Finalizar servicio") para los demás pasos — sin botones en los estados terminales. El layout es de una sola columna, ancho máximo centrado, tarjetas grandes y botones de altura generosa, pensado primero para pantalla de celular.
+
+## 18. Liquidación → Aprobaciones → Contabilidad: el flujo real de pago
+
+Pedido: que "Liquidación" muestre solo servicios en estado `Liquidado`, que Operaciones pueda enviar
+una "orden de aprobación" filtrada por cliente y rango de fechas con indicadores financieros
+(global y por servicio), que un nuevo rol Director de Operaciones apruebe o devuelva esa orden
+(completa o servicio por servicio), que lo aprobado genere una orden de pago para un nuevo módulo
+Contabilidad con V°B° de un nuevo rol Gerente, y que Contabilidad pueda descargar un archivo plano
+una vez autorizado. Devolver un servicio puntual (por Dirección o por Gerencia) no descarta el resto
+de la orden — sigue su curso solo con lo aprobado — y la devolución debe llegar de vuelta a la
+logística que envió la orden.
+
+### 18.1 Por qué las órdenes son un snapshot, no una referencia viva
+
+La mayoría de los servicios de esta plataforma solo existen en el store de demostración del
+navegador (`_serviciosStore`, ver §13.3) — nunca tocan la tabla `servicios` de esta base de datos.
+Pero el flujo de aprobación es multi-rol y multi-sesión (Operaciones envía, Director aprueba días
+después, Gerencia después de eso) — tiene que vivir en el servidor, no en memoria del navegador.
+La solución: `orden_aprobacion_items.snapshot` guarda una copia JSON completa de cada servicio en el
+momento de enviar la orden (fecha, hora, origen, destino, valor cobrado al cliente, valor a pagar al
+proveedor, tipo y nombre del proveedor, margen) — el frontend arma ese snapshot con los mismos datos
+que ya tiene cargados (mock + reales, igual que en `Servicios`/`OperacionesTablero`, ver §12), y una
+vez enviado el snapshot es la única fuente de verdad: la orden ya no depende de que el servicio siga
+existiendo o sin cambios en el store del navegador. `servicio_id` se guarda solo como referencia
+informativa (sin FK — puede ser un id `s001`/`sd0001` del store mock, que no existe en esta base de
+datos), igual que `ordenes_aprobacion.contrato_id`.
+
+### 18.2 Categoría de vehículo "Aliado" y los tres tipos de proveedor
+
+`vehiculos.tipo` tenía solo `Propio`/`Afiliado`; se agregó `Aliado` como una tercera categoría (los
+tres `<option>` de tipo de vehículo, en los dos formularios de Vehículos) para poder discriminar el
+pago exactamente como se pidió: **Propio** (flota de la empresa), **Aliado** (flota de un tercero
+subcontratado) y **Afiliado** (vehículo vinculado bajo el permiso de operación de la empresa, dueño
+independiente). `resolverProveedorVehiculo(vehiculo)` (junto a `LiquidacionServicios`) resuelve el
+tipo y el nombre/documento del beneficiario del pago (`vehiculo.propietario_nombre`/
+`propietario_documento`, ya existentes en el esquema) — si el servicio no tiene vehículo asignado,
+cae a `Afiliado` con "Sin vehículo asignado" para no romper el cálculo.
+
+### 18.3 Indicadores financieros
+
+`calcularIndicadoresLiquidacion(items)` (compartida entre `LiquidacionServicios` y las vistas de
+Director/Gerencia) es la única fuente de verdad para los indicadores, calculada tanto sobre los
+servicios filtrados (antes de enviar, en Liquidación) como sobre el snapshot ya guardado de una
+orden (en las vistas de revisión) — mismos números en todos los puntos del flujo:
+- **Total a facturar al cliente**: suma de `valorCliente` (el `s.valor` del servicio).
+- **Total a pagar a Propios/Aliados/Afiliados**: suma de `valorProveedor` (`s.liquidacion.valorAPagar`,
+  cargado en `LiquidarServicioModal`, ver §15) agrupado por el tipo de proveedor del vehículo.
+- **% de uso por tipo de vehículo**: proporción de servicios (no de valor) cubiertos por cada tipo —
+  qué tanto se apoya la operación en cada categoría de proveedor.
+- **Margen (global y por servicio)**: `(valorCliente − valorProveedor) / valorCliente × 100`. El
+  componente `MargenValor` lo pinta en rojo (`var(--red)`) cuando es menor a 20%, en el color normal
+  en caso contrario — igual en la tarjeta resumen de Liquidación, en la tabla por servicio, y en el
+  detalle que ven Director y Gerencia, para que el indicador se vea "rápido y discriminado" en todos
+  los niveles como se pidió.
+
+### 18.4 Máquina de estados: orden de aprobación → orden de pago
+
+Cada ítem (`orden_aprobacion_items.estado`) pasa por hasta cuatro estados: `Pendiente` (recién
+enviado, esperando a Director) → `Aprobado` (Director lo aprobó — entra a la orden de pago) →
+`Autorizado` (Gerencia dio V°B° — listo para el archivo plano) — o `Devuelto` en cualquiera de las
+dos revisiones, con `devuelto_por`/`devuelto_etapa` (`'Director'`|`'Gerencia'`) y
+`motivo_devolucion`. La orden (`ordenes_aprobacion.estado`) se deriva sola cuando ya no quedan ítems
+`Pendiente`: `Revisada` si al menos uno quedó `Aprobado`, `Devuelta` si todos se devolvieron.
+
+`PUT /api/liquidacion/ordenes/:id/decidir` (rol `director_operaciones`/`admin`) recibe
+`{aprobarItems: [ids], devolverItems: [{id, motivo}]}` — puede ser parcial (Director puede decidir
+por tandas, los ítems no mencionados quedan `Pendiente` para una próxima revisión). En cuanto hay al
+menos un ítem `Aprobado` y todavía no existe una orden de pago para esa orden de aprobación, el mismo
+endpoint crea una (`ordenes_pago`, estado inicial `'Pdte. V°B° Gerencia'`) — no hay una tabla de
+ítems de pago aparte: los ítems de una orden de pago son simplemente los `orden_aprobacion_items` de
+su `orden_aprobacion_id` con estado `Aprobado`/`Autorizado`/`Devuelto` (`ordenPagoConItems` en
+`server.js`), así que no hay que duplicar el snapshot.
+
+`PUT /api/contabilidad/ordenes-pago/:id/decidir` (rol `gerente`/`admin`) recibe solo
+`{devolverItems: [{id, motivo}]}` — los que se devuelven quedan `Devuelto` (etapa `'Gerencia'`); el
+resto de los ítems `Aprobado` de esa orden de pago se marcan `Autorizado` de una vez. Esto refleja
+la mecánica pedida: Gerencia decide qué NO autorizar, y con eso ya termina de decidir toda la orden
+en un solo paso (no hace falta marcar uno por uno los que sí se aprueban).
+
+### 18.5 Alertar a la logística sin infraestructura de notificaciones
+
+Igual que con los servicios rechazados por el conductor (§14.8/§15.3), no hay push notifications —
+`LiquidacionServicios` muestra un banner rojo ("⚠ N orden(es) con servicios devueltos por Dirección o
+Gerencia") cuando alguna de sus órdenes tiene ítems `Devuelto`, y la tabla de "Órdenes de aprobación
+enviadas" siempre está visible con el estado y el conteo de devoluciones de cada una — para corregir,
+la logística edita la liquidación del servicio devuelto (`LiquidarServicioModal`) y lo vuelve a
+incluir en una nueva orden (la orden original no se reenvía ni se edita: cada envío es un snapshot
+nuevo e independiente).
+
+### 18.6 Nuevos módulos y roles
+
+`users.rol` gana `director_operaciones` y `gerente` (usuarios de ejemplo:
+`director@multimodalgroup.com` / `director123` y `gerente@multimodalgroup.com` / `gerente123`, junto
+al `admin` existente). Dos tiles nuevos en `HomeERP` — **Aprobaciones** (`AprobacionesApp` →
+`AprobacionesDirector`) y **Contabilidad** (`ContabilidadApp` → `ContabilidadGerencia`) — con el
+mismo patrón de shell que `ComercialApp` (sidebar mínima + `topMod` en `App()`). A diferencia de
+Flota/Operaciones/Comercial (visibles para cualquiera, sin gating), estos dos tiles se ocultan para
+quien no tiene el rol correspondiente (o `admin`) en vez de mostrarse y bloquear la acción adentro —
+son de un solo rol y no tendría sentido que el resto del personal aterrizara ahí. `Contabilidad`
+también sirve como el punto donde, una vez `Aprobada` una orden de pago, se descarga el archivo
+plano — no se creó un rol "contable" aparte porque el pedido no distinguía esa función de Gerencia;
+`admin` cubre el caso de alguien de soporte necesitando descargarlo.
+
+### 18.7 Archivo plano de pago
+
+`descargarArchivoPlano` (en `OrdenPagoDetalleModal`, solo visible cuando la orden de pago está
+`Aprobada`) agrupa los ítems `Autorizado` por beneficiario (tipo + nombre + documento del
+propietario) y genera un `.txt` delimitado por `|` (`TIPO|DOCUMENTO|BENEFICIARIO|N_SERVICIOS|VALOR_A_PAGAR`,
+una fila por beneficiario) vía un `Blob` descargado directamente en el navegador — sin endpoint
+nuevo en el backend, ya que toda la información ya está cargada en el detalle que ve Gerencia/Contabilidad.

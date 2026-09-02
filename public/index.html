@@ -5588,7 +5588,7 @@ function Vehiculos({
       ...form,
       tipo: e.target.value
     })
-  }, /*#__PURE__*/React.createElement("option", null, "Afiliado"), /*#__PURE__*/React.createElement("option", null, "Propio"))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("option", null, "Afiliado"), /*#__PURE__*/React.createElement("option", null, "Aliado"), /*#__PURE__*/React.createElement("option", null, "Propio"))), /*#__PURE__*/React.createElement("div", {
     className: "fg"
   }, /*#__PURE__*/React.createElement("label", {
     className: "fl"
@@ -5772,7 +5772,7 @@ function ConductorPortalAccesoModal({ conductor, toast, onClose, onGuardado }) {
       React.createElement(Alert, { type: 'info' },
         `El usuario de ingreso al Portal Conductor (${window.location.origin}/conductor) es la cédula: `,
         React.createElement('strong', null, conductor.cedula),
-        '. Define aquí la contraseña y comunícasela al conductor.'),
+        ' (puede escribirse solo con números, sin el prefijo). Define aquí la contraseña y comunícasela al conductor.'),
       React.createElement('div', { className: 'fg' }, React.createElement('label', { className: 'fl' }, 'Nueva contraseña'),
         React.createElement('input', { type: 'password', className: 'fi', value: password, onChange: e => setPassword(e.target.value) })),
       React.createElement('div', { className: 'fg' }, React.createElement('label', { className: 'fl' }, 'Confirmar contraseña'),
@@ -6723,7 +6723,7 @@ function Conductores({
       ...form,
       tipo: e.target.value
     })
-  }, /*#__PURE__*/React.createElement("option", null, "Afiliado"), /*#__PURE__*/React.createElement("option", null, "Propio"))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("option", null, "Afiliado"), /*#__PURE__*/React.createElement("option", null, "Aliado"), /*#__PURE__*/React.createElement("option", null, "Propio"))), /*#__PURE__*/React.createElement("div", {
     className: "fg"
   }, /*#__PURE__*/React.createElement("label", {
     className: "fl"
@@ -21910,25 +21910,32 @@ function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onVerHis
     h('div', { className: 'mb' },
       h('div', { className: 'flex gap2 mb3' }, h('span', { className: `badge ${ESTADO_SVC_BADGE[s.estado] || 'bgr'}` }, s.estado), s.producto && h('span', { className: 'badge bgr', style: { background: PRODUCTOS_SERVICIO[s.producto]?.bg, color: PRODUCTOS_SERVICIO[s.producto]?.color } }, productoLbl(s.producto))),
 
-      h('div', { className: 'dtg' },
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Cliente'), h('div', { className: 'if-val' }, contrato ? contrato.nombre : '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Fecha del servicio'), h('div', { className: 'if-val' }, s.fecha || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Hora'), h('div', { className: 'if-val' }, s.hora || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Tipo de servicio'), h('div', { className: 'if-val' }, s.producto ? productoLbl(s.producto) : '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Origen'), h('div', { className: 'if-val' }, s.origen || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Destino'), h('div', { className: 'if-val' }, s.destino || '—')),
-        s.ventanaRuta && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Ventana de ruta'), h('div', { className: 'if-val' }, s.ventanaRuta)),
-        s.referencia && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Referencia'), h('div', { className: 'if-val' }, s.referencia)),
-        s.obs && h('div', { className: 'drow', style: { gridColumn: '1/-1' } }, h('div', { className: 'if-label' }, 'Anotaciones generales'), h('div', { className: 'if-val' }, s.obs)),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Número de usuarios'), h('div', { className: 'if-val' }, s.pax || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor del servicio'), h('div', { className: 'if-val fbold' }, fmt(s.valor))),
-        contrato && contrato.extracto_cliente_id && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Valor a pagar al proveedor'), h('div', { className: 'if-val fbold' }, tarifarioItem ? fmt(tarifarioItem.pago_afiliado) : '—')),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Cliente', value: contrato ? contrato.nombre : '—' }),
+        h(IField, { label: 'Fecha del servicio', value: s.fecha || '—' }),
+        h(IField, { label: 'Hora', value: s.hora || '—' }),
       ),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Tipo de servicio', value: s.producto ? productoLbl(s.producto) : '—' }),
+        h(IField, { label: 'Origen', value: s.origen || '—' }),
+        h(IField, { label: 'Destino', value: s.destino || '—' }),
+      ),
+      (s.ventanaRuta || s.referencia || s.pax) && h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Ventana de ruta', value: s.ventanaRuta || '—' }),
+        h(IField, { label: 'Referencia', value: s.referencia || '—' }),
+        h(IField, { label: 'Número de usuarios', value: s.pax || '—' }),
+      ),
+      h('div', { className: contrato && contrato.extracto_cliente_id ? 'g2c mb2' : 'g3c mb2' },
+        h(IField, { label: 'Valor del servicio', value: h('span', { className: 'fbold' }, fmt(s.valor)) }),
+        contrato && contrato.extracto_cliente_id && h(IField, { label: 'Valor a pagar al proveedor', value: h('span', { className: 'fbold' }, tarifarioItem ? fmt(tarifarioItem.pago_afiliado) : '—') }),
+      ),
+      s.obs && h('div', { className: 'mb2' }, h(IField, { label: 'Anotaciones generales', value: s.obs })),
 
-      usuarios.length > 0 && h('div', { style: { marginTop: 11, marginBottom: 4 } },
+      usuarios.length > 0 && h('div', { className: 'mb2' },
         h('div', { className: 'if-label' }, `Usuarios (${usuarios.length})`),
-        usuarios.map((u, i) => h('div', { key: i, className: 'if-val', style: { display: 'flex', gap: 10, flexWrap: 'wrap' } },
-          h('span', null, `👤 ${u.nombre || '—'}`), u.telefono && h('span', { className: 'tmut' }, `📞 ${u.telefono}`), u.id && h('span', { className: 'tmut' }, `🪪 ${u.id}`)))
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 14px' } },
+          usuarios.map((u, i) => h('span', { key: i, className: 'if-val', style: { display: 'flex', gap: 6, marginBottom: 3 } },
+            `👤 ${u.nombre || '—'}`, u.telefono && h('span', { className: 'tmut' }, `· 📞 ${u.telefono}`), u.id && h('span', { className: 'tmut' }, `· 🪪 ${u.id}`))))
       ),
 
       h('div', { className: 'divider' }),
@@ -21937,18 +21944,17 @@ function VerServicioModal({ servicio: s, contrato, vehiculo, conductor, onVerHis
       h(RutaMapaLink, { origenGeo: s.origenGeo, destinoGeo: s.destinoGeo }),
 
       h('div', { className: 'divider' }),
-      h('div', { className: 'dtg' },
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Vehículo'), h('div', { className: 'if-val' }, vehiculo ? `${vehiculo.placa} (${vehiculo.tipo})` : 'Sin asignar')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Conductor'), h('div', { className: 'if-val' }, conductor ? conductor.nombre : 'Sin asignar')),
-        otrosCampos.map(c => h('div', { key: c.id, className: 'drow' }, h('div', { className: 'if-label' }, c.nombre), h('div', { className: 'if-val' }, String(s.campos[c.id])))),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Vehículo', value: vehiculo ? `${vehiculo.placa} (${vehiculo.tipo})` : 'Sin asignar' }),
+        h(IField, { label: 'Conductor', value: conductor ? conductor.nombre : 'Sin asignar' }),
+        otrosCampos.map(c => h(IField, { key: c.id, label: c.nombre, value: String(s.campos[c.id]) })),
       ),
       s.liquidacion && h('div', { className: 'card mt3' },
         h('div', { className: 'ch' }, h('span', { className: 'ct' }, '🧾 Liquidación')),
-        h('div', { className: 'cb' },
-          h('div', { className: 'if-label' }, 'Tarifa confirmada'), h('div', { className: 'if-val fbold' }, fmt(s.liquidacion.tarifaConfirmada)),
-          h('div', { className: 'if-label' }, 'Valor a pagar'), h('div', { className: 'if-val fbold' }, fmt(s.liquidacion.valorAPagar)),
-          h('div', { className: 'if-label' }, 'Pagar a'), h('div', { className: 'if-val' }, s.liquidacion.pagarA === 'tercero' ? `Tercero externo — ${s.liquidacion.terceroNombre}` : 'Conductor/vehículo en plataforma'),
-          s.liquidacion.novedades && h(React.Fragment, null, h('div', { className: 'if-label' }, 'Novedades'), h('div', { className: 'if-val' }, s.liquidacion.novedades))
+        h('div', { className: 'cb g3c' },
+          h(IField, { label: 'Tarifa confirmada', value: h('span', { className: 'fbold' }, fmt(s.liquidacion.tarifaConfirmada)) }),
+          h(IField, { label: 'Valor a pagar', value: h('span', { className: 'fbold' }, fmt(s.liquidacion.valorAPagar)) }),
+          s.liquidacion.novedades && h(IField, { label: 'Novedades', value: s.liquidacion.novedades })
         )
       ),
       h('div', { className: 'flex gap2 mt3' },
@@ -21985,19 +21991,14 @@ function LiquidarServicioModal({ servicio: s, toast, onSave, onClose }) {
   const [tarifaConfirmada, setTarifaConfirmada] = useState(s.liquidacion?.tarifaConfirmada ?? tarifaSugerida);
   const [novedades, setNovedades] = useState(s.liquidacion?.novedades || '');
   const [valorAPagar, setValorAPagar] = useState(s.liquidacion?.valorAPagar ?? tarifaSugerida);
-  const [pagarA, setPagarA] = useState(s.liquidacion?.pagarA || 'plataforma');
-  const [terceroNombre, setTerceroNombre] = useState(s.liquidacion?.terceroNombre || '');
 
   const confirmar = () => {
-    if (pagarA === 'tercero' && !terceroNombre.trim()) { alert('Ingresa el nombre del tercero al que se le pagará'); return; }
     onSave({
       estado: 'Liquidado',
       liquidacion: {
         tarifaConfirmada: Number(tarifaConfirmada) || 0,
         novedades: novedades.trim(),
         valorAPagar: Number(valorAPagar) || 0,
-        pagarA,
-        terceroNombre: pagarA === 'tercero' ? terceroNombre.trim() : '',
         fecha: new Date().toISOString()
       }
     });
@@ -22009,14 +22010,7 @@ function LiquidarServicioModal({ servicio: s, toast, onSave, onClose }) {
       h('div', { className: 'al al-info mb3' }, `Producto: ${productoLbl(s.producto)} · Tarifa según producto: ${fmt(tarifaSugerida)}`),
       h(FG, { label: 'Tarifa confirmada del servicio' }, h('input', { type: 'number', className: 'fi', value: tarifaConfirmada, onChange: e => setTarifaConfirmada(e.target.value) })),
       h(FG, { label: 'Novedades' }, h('textarea', { className: 'fta', rows: 2, placeholder: 'Ej: recargo por espera, descuento por cancelación parcial...', value: novedades, onChange: e => setNovedades(e.target.value) })),
-      h(FG, { label: 'Valor a pagar' }, h('input', { type: 'number', className: 'fi', value: valorAPagar, onChange: e => setValorAPagar(e.target.value) })),
-      h(FG, { label: '¿A quién se debe pagar?' },
-        h('div', { className: 'flex gap2' },
-          h('button', { className: `btn btn-sm ${pagarA === 'plataforma' ? 'bp' : 'bs'}`, onClick: () => setPagarA('plataforma') }, '🚚 Conductor/vehículo en plataforma'),
-          h('button', { className: `btn btn-sm ${pagarA === 'tercero' ? 'bp' : 'bs'}`, onClick: () => setPagarA('tercero') }, '🤝 Tercero externo')
-        )
-      ),
-      pagarA === 'tercero' && h(FG, { label: 'Nombre del tercero' }, h('input', { className: 'fi', placeholder: 'Nombre de la persona o empresa coordinada por fuera de la plataforma', value: terceroNombre, onChange: e => setTerceroNombre(e.target.value) })),
+      h(FG, { label: 'Valor a pagar (al conductor/vehículo)' }, h('input', { type: 'number', className: 'fi', value: valorAPagar, onChange: e => setValorAPagar(e.target.value) })),
       h('div', { className: 'flex gap2 mt3' },
         h('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
         h('button', { className: 'btn bp', onClick: confirmar }, '✓ Confirmar liquidación')
@@ -22469,7 +22463,8 @@ function TableroGridHoras({ dias, servicios, contratos, conductores, colorBy, on
         TABLERO_HORAS.map(hr => [
           h('div', { key: 'h' + hr, className: 'txs tmut', style: { textAlign: 'right', paddingRight: 6, paddingTop: 4, borderTop: '1px solid var(--border2)' } }, `${String(hr).padStart(2, '0')}:00`),
           ...dias.map(dInfo => {
-            const evs = servicios.filter(s => s.fecha === dInfo.fecha && s.hora && parseInt(s.hora.slice(0, 2), 10) === hr);
+            const evs = servicios.filter(s => s.fecha === dInfo.fecha && s.hora && parseInt(s.hora.slice(0, 2), 10) === hr)
+              .sort((a, b) => a.hora.localeCompare(b.hora));
             return h('div', {
               key: dInfo.fecha + '-' + hr,
               onClick: () => onCeldaClick(dInfo.fecha, `${String(hr).padStart(2, '0')}:00`),
@@ -22961,248 +22956,555 @@ function EnviarCorreoModal({ correo, asunto, cuerpo, onClose, toast }) {
   );
 }
 
+// ─────────────────────── LIQUIDACIÓN Y APROBACIÓN DE PAGOS ───────────────────────
+// Flujo real (ver BACKEND_DESIGN.md §17): Operaciones filtra servicios Liquidados de un cliente en
+// un rango de fechas y envía una "orden de aprobación" al servidor — un snapshot de cada servicio
+// (no una referencia viva: muchos servicios de la demo solo existen en el store del navegador, no
+// en esta base de datos). El Director de Operaciones aprueba o devuelve la orden, servicio por
+// servicio si hace falta; lo aprobado arma una orden de pago para Contabilidad, que Gerencia
+// autoriza (V°B°) antes de poder descargar el archivo plano de pago a cada proveedor.
+const PROVEEDOR_TIPO_BADGE = { Propio: 'bg', Aliado: 'bamb', Afiliado: 'bb' };
+const ITEM_ESTADO_BADGE = { Pendiente: 'by', Aprobado: 'bb', Autorizado: 'bg', Devuelto: 'br' };
+function resolverProveedorVehiculo(vehiculo) {
+  if (!vehiculo) return { tipo: 'Afiliado', nombre: 'Sin vehículo asignado', documento: '' };
+  const tipo = ['Propio', 'Aliado'].includes(vehiculo.tipo) ? vehiculo.tipo : 'Afiliado';
+  return { tipo, nombre: vehiculo.propietario_nombre || vehiculo.placa, documento: vehiculo.propietario_documento || '' };
+}
+function margenServicio(valorCliente, valorProveedor) {
+  return valorCliente > 0 ? ((valorCliente - valorProveedor) / valorCliente) * 100 : 0;
+}
+// Indicadores globales de una orden: total a facturar/pagar por tipo de proveedor, % de uso de
+// cada tipo (cuántos de los servicios los cubrió) y el margen global — cobrado al cliente vs.
+// pagado al proveedor del servicio.
+function calcularIndicadoresLiquidacion(items) {
+  const porTipo = { Propio: { count: 0, total: 0 }, Aliado: { count: 0, total: 0 }, Afiliado: { count: 0, total: 0 } };
+  let totalCliente = 0;
+  items.forEach(it => {
+    totalCliente += it.valorCliente || 0;
+    const t = porTipo[it.proveedorTipo] ? it.proveedorTipo : 'Afiliado';
+    porTipo[t].count++; porTipo[t].total += it.valorProveedor || 0;
+  });
+  const totalProveedores = porTipo.Propio.total + porTipo.Aliado.total + porTipo.Afiliado.total;
+  const n = items.length || 1;
+  return {
+    totalFacturarCliente: totalCliente,
+    totalPagarPropios: porTipo.Propio.total,
+    totalPagarAliados: porTipo.Aliado.total,
+    totalPagarAfiliados: porTipo.Afiliado.total,
+    usoPct: { Propio: (porTipo.Propio.count / n) * 100, Aliado: (porTipo.Aliado.count / n) * 100, Afiliado: (porTipo.Afiliado.count / n) * 100 },
+    margenGlobalPct: margenServicio(totalCliente, totalProveedores),
+  };
+}
+function MargenValor({ pct }) {
+  return h('span', { className: 'fbold', style: { color: pct < 20 ? 'var(--red)' : 'var(--teal)' } }, `${pct.toFixed(1)}%`);
+}
+
 function LiquidacionServicios({ toast }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const primerDiaMes = hoy.slice(0, 8) + '01';
   const [desde, setDesde] = useState(primerDiaMes);
   const [hasta, setHasta] = useState(hoy);
-  const [contratoId, setContratoId] = useState('todos');
-  const [tipoContrato, setTipoContrato] = useState('todos');
-  const [placa, setPlaca] = useState('todos');
+  const [contratoId, setContratoId] = useState('');
   const [correo, setCorreo] = useState('');
   const [mailModal, setMailModal] = useState(null);
-  const [tipoInforme, setTipoInforme] = useState('cliente'); // 'cliente' | 'proveedor'
-  const [tareasVersion, setTareasVersion] = useState(0);
+  const [enviando, setEnviando] = useState(false);
+  const [ordenes, setOrdenes] = useState([]);
+  const [serviciosReales, setServiciosReales] = useState([]);
+  const [verOrden, setVerOrden] = useState(null);
 
   const contratos = getContratosStore();
   const vehiculosTodos = getVehiculosStore();
-  const servicios = getServiciosStore();
-  const tiposContrato = ['Corporativo', 'Convenio', 'Gubernamental', 'Aeropuerto', 'Salud', 'Otros'];
-  const placasUsadas = [...new Set(servicios.map(s => s.vehiculoId).filter(Boolean))]
-    .map(id => vehiculosTodos.find(v => v.id === id)).filter(Boolean)
-    .sort((a, b) => a.placa.localeCompare(b.placa));
 
-  const enRango = s => {
-    if (!s.fecha) return false;
-    if (s.fecha < desde || s.fecha > hasta) return false;
-    if (contratoId !== 'todos' && s.contratoId !== contratoId) return false;
-    if (placa !== 'todos' && s.vehiculoId !== placa) return false;
-    if (tipoContrato !== 'todos') {
-      const k = contratos.find(x => x.id === s.contratoId);
-      if (!k || k.tipo !== tipoContrato) return false;
-    }
-    return true;
+  const refresh = () => {
+    extApiGet('/api/liquidacion/ordenes').then(setOrdenes).catch(() => {});
+    extApiGet('/api/servicios').then(setServiciosReales).catch(() => {});
   };
+  useEffect(() => { refresh(); }, []);
 
-  const filtrados = servicios.filter(enRango).sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+  const serviciosTodos = [
+    ...getServiciosStore(),
+    ...serviciosReales.map(s => ({ ...s, contratoId: s.contrato_id, vehiculoId: s.vehiculo_id, conductorId: s.conductor_id })),
+  ];
 
-  const porTipo = {};
-  filtrados.forEach(s => {
+  const filtrados = serviciosTodos.filter(s => s.estado === 'Liquidado' && s.fecha && s.fecha >= desde && s.fecha <= hasta && (!contratoId || s.contratoId === contratoId))
+    .sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+
+  const items = filtrados.map(s => {
     const k = contratos.find(x => x.id === s.contratoId);
-    const t = k ? k.tipo : 'Sin contrato';
-    if (!porTipo[t]) porTipo[t] = { count: 0, total: 0 };
-    porTipo[t].count++;
-    porTipo[t].total += (s.valor || 0);
-  });
-  const granTotal = filtrados.reduce((s, x) => s + (x.valor || 0), 0);
-
-  const filaExcel = s => {
-    const k = contratos.find(x => x.id === s.contratoId);
-    const v = getVehiculosStore().find(x => x.id === s.vehiculoId);
+    const v = vehiculosTodos.find(x => x.id === s.vehiculoId);
     const cd = getConductores().find(x => x.id === s.conductorId);
+    const proveedor = resolverProveedorVehiculo(v);
+    const valorCliente = s.valor || 0;
+    const valorProveedor = (s.liquidacion && s.liquidacion.valorAPagar) || 0;
     return {
-      'N.º Orden': s.id,
-      'Fecha': s.fecha || '',
-      'Hora': s.hora || '',
-      'Contrato': k ? k.nombre : 'Sin contrato',
-      'Tipo de contrato': k ? k.tipo : '',
-      'Producto': s.producto ? productoLbl(s.producto) : '',
-      'Origen': s.origen || '',
-      'Destino': s.destino || '',
-      'Pax': s.pax || 0,
-      'Placa': v ? v.placa : '',
-      'Vehículo': v ? `${v.marca} ${v.linea}` : '',
-      'Conductor': cd ? cd.nombre : '',
-      'Cédula conductor': cd ? cd.cedula : '',
-      'Estado': s.estado || '',
-      'Valor (COP)': s.valor || 0,
-      'Tarifa confirmada (liquidación)': s.liquidacion ? s.liquidacion.tarifaConfirmada : '',
-      'Valor a pagar (liquidación)': s.liquidacion ? s.liquidacion.valorAPagar : '',
-      'Pagar a': s.liquidacion ? (s.liquidacion.pagarA === 'tercero' ? `Tercero — ${s.liquidacion.terceroNombre}` : 'Conductor/vehículo en plataforma') : '',
-      'Novedades': s.liquidacion ? s.liquidacion.novedades : '',
-      'Observaciones': s.obs || ''
+      servicioId: s.id, servicioNumero: s.numero || s.id, fecha: s.fecha, hora: s.hora,
+      origen: s.origen, destino: s.destino, producto: s.producto ? productoLbl(s.producto) : '—',
+      cliente: k ? k.nombre : '—',
+      valorCliente, valorProveedor,
+      proveedorTipo: proveedor.tipo, proveedorNombre: proveedor.nombre, proveedorDocumento: proveedor.documento,
+      vehiculoPlaca: v ? v.placa : '', conductorNombre: cd ? cd.nombre : '',
+      margenPct: margenServicio(valorCliente, valorProveedor),
     };
+  });
+
+  const ind = calcularIndicadoresLiquidacion(items);
+  const puedeEnviar = !!contratoId && items.length > 0;
+  const misOrdenes = ordenes.filter(o => !contratoId || o.contrato_id === contratoId);
+  const conDevoluciones = ordenes.filter(o => o.conteoItems && o.conteoItems.Devuelto > 0);
+
+  const enviarOrden = async () => {
+    if (!puedeEnviar) return;
+    setEnviando(true);
+    try {
+      const k = contratos.find(x => x.id === contratoId);
+      await extApiSend('POST', '/api/liquidacion/ordenes', {
+        contratoId, clienteNombre: k ? k.nombre : '—', fechaDesde: desde, fechaHasta: hasta, items, totales: ind,
+      });
+      toast('📤 Orden de aprobación enviada al Director de Operaciones', 'success');
+      refresh();
+    } catch (e) { toast(e.message, 'danger'); } finally { setEnviando(false); }
   };
 
+  const filaExcel = it => ({
+    'N.º servicio': it.servicioNumero, 'Fecha': it.fecha, 'Hora': it.hora, 'Cliente': it.cliente,
+    'Producto': it.producto, 'Origen': it.origen, 'Destino': it.destino,
+    'Placa': it.vehiculoPlaca, 'Conductor': it.conductorNombre,
+    'Tipo de proveedor': it.proveedorTipo, 'Proveedor': it.proveedorNombre,
+    'Valor a facturar al cliente': it.valorCliente, 'Valor a pagar al proveedor': it.valorProveedor,
+    'Margen (%)': Number(it.margenPct.toFixed(1)),
+  });
   const generarExcel = () => {
     if (!window.XLSX) { alert('La librería de Excel no cargó. Verifica tu conexión a internet.'); return; }
-    if (filtrados.length === 0) { alert('No hay servicios en el rango y filtros seleccionados'); return; }
+    if (items.length === 0) { alert('No hay servicios liquidados en el rango y filtros seleccionados'); return; }
     const wb = window.XLSX.utils.book_new();
-
-    const wsResumen = window.XLSX.utils.json_to_sheet(
-      Object.keys(porTipo).map(t => ({ 'Tipo de contrato': t, 'N.º de servicios': porTipo[t].count, 'Valor total (COP)': porTipo[t].total }))
-        .concat([{ 'Tipo de contrato': 'TOTAL', 'N.º de servicios': filtrados.length, 'Valor total (COP)': granTotal }])
-    );
+    const wsResumen = window.XLSX.utils.json_to_sheet([
+      { Indicador: 'Total a facturar al cliente', Valor: ind.totalFacturarCliente },
+      { Indicador: 'Total a pagar a Propios', Valor: ind.totalPagarPropios },
+      { Indicador: 'Total a pagar a Aliados', Valor: ind.totalPagarAliados },
+      { Indicador: 'Total a pagar a Afiliados', Valor: ind.totalPagarAfiliados },
+      { Indicador: 'Margen global (%)', Valor: Number(ind.margenGlobalPct.toFixed(1)) },
+    ]);
     window.XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
-
-    // Hoja principal: detalle de la totalidad de servicios filtrados
-    const wsTodos = window.XLSX.utils.json_to_sheet(filtrados.map(filaExcel));
-    window.XLSX.utils.book_append_sheet(wb, wsTodos, 'Todos los servicios');
-
-    // Una hoja adicional por tipo de contrato, con el mismo detalle
-    Object.keys(porTipo).forEach(t => {
-      const filas = filtrados.filter(s => {
-        const k = contratos.find(x => x.id === s.contratoId);
-        return (k ? k.tipo : 'Sin contrato') === t;
-      }).map(filaExcel);
-      const ws = window.XLSX.utils.json_to_sheet(filas);
-      window.XLSX.utils.book_append_sheet(wb, ws, t.substring(0, 31));
-    });
-
-    window.XLSX.writeFile(wb, `Relacion_Servicios_${desde}_a_${hasta}.xlsx`);
+    const wsDetalle = window.XLSX.utils.json_to_sheet(items.map(filaExcel));
+    window.XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle');
+    window.XLSX.writeFile(wb, `Relacion_Cobro_${desde}_a_${hasta}.xlsx`);
     toast('✅ Excel generado');
-  };
-
-  const enviarTareaAutorizacion = () => {
-    if (filtrados.length === 0) { alert('No hay servicios en el rango y filtros seleccionados'); return; }
-    const contratoNombre = contratoId === 'todos' ? 'Todos los contratos' : (contratos.find(k => k.id === contratoId)?.nombre || '—');
-    addTarea({
-      id: 'tarea_liq_' + Date.now(),
-      tipo: 'pago_proveedor',
-      etapa: 'autorizacion',
-      titulo: `Pago a proveedor — servicios ${desde} a ${hasta}`,
-      descripcion: `Informe de servicios ejecutados para pago a proveedor · ${contratoNombre}${tipoContrato !== 'todos' ? ' · ' + tipoContrato : ''} · ${filtrados.length} servicio(s) · ${fmt(granTotal)}`,
-      asignadoA: 'Director de Operaciones',
-      estado: 'PENDIENTE',
-      fecha: new Date().toISOString(),
-      desde, hasta, contratoNombre, totalServicios: filtrados.length, valorTotal: granTotal
-    });
-    setTareasVersion(v => v + 1);
-    toast('📤 Enviado al Director de Operaciones para autorización');
-  };
-
-  const autorizarTarea = tareaId => {
-    if (!window.confirm('¿Autorizar esta relación de servicios para pago? Se enviará al área contable.')) return;
-    updateTarea(tareaId, { etapa: 'contabilidad', asignadoA: 'Área Contable', autorizadoPor: USUARIO.nombre, fechaAutorizacion: new Date().toISOString() });
-    setTareasVersion(v => v + 1);
-    toast('✅ Autorizado y enviado al área contable');
-  };
-
-  const marcarPagado = tareaId => {
-    updateTarea(tareaId, { estado: 'PAGADO', fechaPago: new Date().toISOString() });
-    setTareasVersion(v => v + 1);
-    toast('💰 Marcado como pagado');
   };
 
   const enviarPorCorreo = () => {
     if (!correo.trim()) { alert('Ingresa el correo del destinatario (puedes separar varios con comas)'); return; }
-    if (filtrados.length === 0) { alert('No hay servicios en el rango y filtros seleccionados'); return; }
-    const asunto = `Relación de servicios ejecutados ${desde} a ${hasta}`;
+    if (items.length === 0) { alert('No hay servicios liquidados en el rango y filtros seleccionados'); return; }
+    const k = contratos.find(x => x.id === contratoId);
+    const asunto = `Relación de servicios a cobrar ${desde} a ${hasta}${k ? ' — ' + k.nombre : ''}`;
     const cuerpo =
-      `Adjunto la relación de servicios ejecutados entre ${desde} y ${hasta}.\n\n` +
-      `Total de servicios: ${filtrados.length}\nValor total: ${fmt(granTotal)}\n\n` +
-      Object.keys(porTipo).map(t => `- ${t}: ${porTipo[t].count} servicios · ${fmt(porTipo[t].total)}`).join('\n') +
-      `\n\nNota: genera primero el Excel con "Generar Excel" y adjúntalo manualmente a este correo, ya que el navegador no permite adjuntar archivos automáticamente.`;
+      `Estimados,\n\nAdjunto la relación de servicios ejecutados y liquidados entre ${desde} y ${hasta}` + (k ? ` para ${k.nombre}` : '') + `, para su revisión y aprobación.\n\n` +
+      `Total de servicios: ${items.length}\nValor total a facturar: ${fmt(ind.totalFacturarCliente)}\n\n` +
+      `Quedamos atentos a su aprobación.\n\nSaludos,\n${USUARIO.nombre}\n\n` +
+      `Nota: genera primero el Excel con "Generar Excel" y adjúntalo manualmente a este correo, ya que el navegador no permite adjuntar archivos automáticamente.`;
     setMailModal({ correo: correo.trim(), asunto, cuerpo });
   };
 
-  const limpiarFiltros = () => { setContratoId('todos'); setTipoContrato('todos'); setPlaca('todos'); setDesde(primerDiaMes); setHasta(hoy); };
-  const filtrosActivos = contratoId !== 'todos' || tipoContrato !== 'todos' || placa !== 'todos';
-
   return h('div', null,
     h('div', { className: 'section-bar mb4' },
-      h('div', null, h('div', { className: 'sh-head' }, '🧾 Liquidación de Servicios'), h('div', { className: 'sh-sub' }, tipoInforme === 'proveedor' ? 'Informe de servicios ejecutados por rango de fechas, para pago a proveedor' : 'Relación de servicios ejecutados por rango de fechas, para solicitud de pago a clientes'))
+      h('div', null, h('div', { className: 'sh-head' }, '🧾 Liquidación'), h('div', { className: 'sh-sub' }, 'Servicios liquidados listos para facturar al cliente y pagar a los proveedores'))
     ),
+    conDevoluciones.length > 0 && h('div', { className: 'al al-danger mb4' },
+      `⚠ ${conDevoluciones.length} orden(es) con servicios devueltos por Dirección o Gerencia — revisa el historial abajo para corregir y reenviar.`),
+
     h('div', { className: 'card mb4' },
-      h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Filtros'), filtrosActivos && h('button', { className: 'btn btn-sm bs', onClick: limpiarFiltros }, '✕ Limpiar filtros')),
-      h('div', { className: 'cb' },
-        h(FG, { label: '¿Para qué es este informe?' },
-          h('div', { className: 'flex gap2' },
-            h('button', { className: `btn btn-sm ${tipoInforme === 'cliente' ? 'bp' : 'bs'}`, onClick: () => setTipoInforme('cliente') }, '👤 Solicitud de pago a clientes'),
-            h('button', { className: `btn btn-sm ${tipoInforme === 'proveedor' ? 'bp' : 'bs'}`, onClick: () => setTipoInforme('proveedor') }, '🚚 Pago a proveedor')
-          )
-        ),
-        h('div', { className: 'fg3' },
-          h(FG, { label: 'Desde' }, h('input', { type: 'date', className: 'fi', value: desde, onChange: e => setDesde(e.target.value) })),
-          h(FG, { label: 'Hasta' }, h('input', { type: 'date', className: 'fi', value: hasta, onChange: e => setHasta(e.target.value) })),
-          h(FG, { label: 'Convenio / Tipo de contrato' }, h('select', { className: 'fsel', value: tipoContrato, onChange: e => setTipoContrato(e.target.value) }, h('option', { value: 'todos' }, 'Todos los tipos'), tiposContrato.map(t => h('option', { key: t, value: t }, t))))
-        ),
-        h('div', { className: 'fg2' },
-          h(FG, { label: 'Cliente / Contrato' }, h('select', { className: 'fsel', value: contratoId, onChange: e => setContratoId(e.target.value) }, h('option', { value: 'todos' }, 'Todos los clientes'), contratos.map(k => h('option', { key: k.id, value: k.id }, k.nombre)))),
-          h(FG, { label: 'Placa de vehículo' }, h('select', { className: 'fsel', value: placa, onChange: e => setPlaca(e.target.value) }, h('option', { value: 'todos' }, 'Todas las placas'), placasUsadas.map(v => h('option', { key: v.id, value: v.id }, v.placa))))
+      h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Filtros — elige un cliente específico para poder enviar la orden')),
+      h('div', { className: 'cb fg3' },
+        h(FG, { label: 'Cliente *' }, h('select', { className: 'fsel', value: contratoId, onChange: e => setContratoId(e.target.value) }, h('option', { value: '' }, 'Selecciona un cliente...'), contratos.map(k => h('option', { key: k.id, value: k.id }, k.nombre)))),
+        h(FG, { label: 'Desde' }, h('input', { type: 'date', className: 'fi', value: desde, onChange: e => setDesde(e.target.value) })),
+        h(FG, { label: 'Hasta' }, h('input', { type: 'date', className: 'fi', value: hasta, onChange: e => setHasta(e.target.value) })),
+      )
+    ),
+
+    h('div', { className: 'sg' },
+      h('div', { className: 'sc pri' }, h('div', { className: 'sl' }, 'Total a facturar al cliente'), h('div', { className: 'sv' }, fmt(ind.totalFacturarCliente)), h('div', { className: 'ss' }, `${items.length} servicio(s) liquidados`)),
+      h('div', { className: 'sc' }, h('div', { className: 'sl' }, 'Pagar a Propios'), h('div', { className: 'sv' }, fmt(ind.totalPagarPropios)), h('div', { className: 'ss' }, `${ind.usoPct.Propio.toFixed(0)}% de los servicios`)),
+      h('div', { className: 'sc' }, h('div', { className: 'sl' }, 'Pagar a Aliados'), h('div', { className: 'sv' }, fmt(ind.totalPagarAliados)), h('div', { className: 'ss' }, `${ind.usoPct.Aliado.toFixed(0)}% de los servicios`)),
+      h('div', { className: 'sc' }, h('div', { className: 'sl' }, 'Pagar a Afiliados'), h('div', { className: 'sv' }, fmt(ind.totalPagarAfiliados)), h('div', { className: 'ss' }, `${ind.usoPct.Afiliado.toFixed(0)}% de los servicios`)),
+      h('div', { className: `sc ${ind.margenGlobalPct < 20 ? 'danger' : 'ok'}` }, h('div', { className: 'sl' }, 'Margen global'), h('div', { className: 'sv' }, `${ind.margenGlobalPct.toFixed(1)}%`), h('div', { className: 'ss' }, ind.margenGlobalPct < 20 ? '⚠ Por debajo del 20%' : 'cobrado vs. pagado a proveedor')),
+    ),
+
+    h('div', { className: 'card mb4' },
+      h('div', { className: 'ch' }, h('span', { className: 'ct' }, `Servicios liquidados (${items.length})`)),
+      h('div', { className: 'cb tw' },
+        items.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin servicios liquidados en el rango y filtros seleccionados')) :
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Hora', 'Origen → Destino', 'Placa', 'Proveedor', 'Valor cliente', 'Valor proveedor', 'Margen'].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, items.map(it => h('tr', { key: it.servicioId },
+            h('td', { className: 'tmono txs' }, it.servicioNumero),
+            h('td', null, it.fecha), h('td', null, it.hora),
+            h('td', { className: 'tsr' }, `${it.origen} → ${it.destino}`),
+            h('td', null, it.vehiculoPlaca ? h('span', { className: 'placa' }, it.vehiculoPlaca) : '—'),
+            h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[it.proveedorTipo]}` }, it.proveedorTipo), h('div', { className: 'txs tmut' }, it.proveedorNombre)),
+            h('td', { className: 'fbold' }, fmt(it.valorCliente)),
+            h('td', null, fmt(it.valorProveedor)),
+            h('td', null, h(MargenValor, { pct: it.margenPct }))
+          )))
+        )
+      ),
+      h('div', { className: 'cf' },
+        h('div', { className: 'flex gap2', style: { width: '100%', flexWrap: 'wrap' } },
+          h('button', { className: 'btn bp', onClick: generarExcel }, '📥 Generar Excel de relación de cobro'),
+          h('input', { className: 'fi', style: { maxWidth: 280 }, placeholder: 'correo@cliente.com, otro@cliente.com', value: correo, onChange: e => setCorreo(e.target.value) }),
+          h('button', { className: 'btn bs', onClick: enviarPorCorreo }, '✉️ Preparar envío por correo'),
+          h('button', { className: 'btn bsu', disabled: !puedeEnviar || enviando, onClick: enviarOrden }, enviando ? 'Enviando…' : '📤 Enviar orden de aprobación al Director de Operaciones')
         )
       )
     ),
-    h('div', { className: 'card mb4' },
-      h('div', { className: 'ch' }, h('span', { className: 'ct' }, `Servicios filtrados (${filtrados.length})`)),
+
+    h('div', { className: 'card' },
+      h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Órdenes de aprobación enviadas')),
       h('div', { className: 'cb tw' },
-        filtrados.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin servicios en el rango y filtros seleccionados')) :
+        misOrdenes.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Aún no se ha enviado ninguna orden de aprobación')) :
         h('table', null,
-          h('thead', null, h('tr', null, ['Fecha', 'Hora', 'Contrato', 'Tipo', 'Vehículo', 'Origen → Destino', 'Estado', 'Valor'].map(x => h('th', { key: x }, x)))),
-          h('tbody', null, filtrados.map(s => {
-            const k = contratos.find(x => x.id === s.contratoId);
-            const v = vehiculosTodos.find(x => x.id === s.vehiculoId);
-            return h('tr', { key: s.id },
-              h('td', null, s.fecha), h('td', null, s.hora), h('td', null, k ? k.nombre : '—'), h('td', null, k ? k.tipo : '—'),
-              h('td', null, v ? h('span', { className: 'placa' }, v.placa) : '—'),
-              h('td', null, `${s.origen} → ${s.destino}`),
-              h('td', null, h('span', { className: `badge ${ESTADO_SVC_BADGE[s.estado] || 'bgr'}` }, s.estado)),
-              h('td', { className: 'fbold' }, fmt(s.valor))
+          h('thead', null, h('tr', null, ['N.º orden', 'Cliente', 'Rango', 'Servicios', 'Valor cliente', 'Estado', 'Devoluciones'].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, misOrdenes.map(o => h('tr', { key: o.id, style: { cursor: 'pointer' }, onClick: () => setVerOrden(o.id) },
+            h('td', { className: 'tmono txs' }, o.numero),
+            h('td', null, o.cliente_nombre),
+            h('td', null, `${o.fecha_desde} → ${o.fecha_hasta}`),
+            h('td', null, o.conteoItems ? (o.conteoItems.Pendiente + o.conteoItems.Aprobado + o.conteoItems.Devuelto + o.conteoItems.Autorizado) : '—'),
+            h('td', { className: 'fbold' }, o.totales ? fmt(o.totales.totalFacturarCliente) : '—'),
+            h('td', null, h('span', { className: `badge ${o.estado === 'Revisada' ? 'bg' : o.estado === 'Devuelta' ? 'br' : 'by'}` }, o.estado)),
+            h('td', null, o.conteoItems && o.conteoItems.Devuelto > 0 ? h('span', { className: 'badge br' }, `${o.conteoItems.Devuelto} devuelto(s)`) : '—')
+          )))
+        )
+      )
+    ),
+    verOrden && h(OrdenAprobacionDetalleModal, { ordenId: verOrden, soloLectura: true, toast: toast, onClose: () => setVerOrden(null) }),
+    mailModal && h(EnviarCorreoModal, { correo: mailModal.correo, asunto: mailModal.asunto, cuerpo: mailModal.cuerpo, toast: toast, onClose: () => setMailModal(null) })
+  );
+}
+
+// Detalle de una orden de aprobación: indicadores globales + tabla por servicio. En modo activo
+// (Director de Operaciones) cada ítem "Pendiente" se marca para aprobar o devolver (con motivo) y
+// "Guardar decisión" envía todo junto; en modo soloLectura (vista desde Liquidación) es solo consulta.
+function OrdenAprobacionDetalleModal({ ordenId, soloLectura, onClose, onDecidido, toast }) {
+  const [orden, setOrden] = useState(null);
+  const [seleccion, setSeleccion] = useState({});
+  const [motivos, setMotivos] = useState({});
+  const [guardando, setGuardando] = useState(false);
+
+  const cargar = () => extApiGet(`/api/liquidacion/ordenes/${ordenId}`).then(setOrden).catch(e => toast && toast(e.message, 'danger'));
+  useEffect(() => { cargar(); }, [ordenId]);
+
+  if (!orden) return h(Modal, { open: true, onClose, title: 'Cargando…' }, h('div', { className: 'mb' }, 'Cargando…'));
+
+  const items = orden.items || [];
+  const pendientes = items.filter(it => it.estado === 'Pendiente');
+  const ind = calcularIndicadoresLiquidacion(items.map(it => it.snapshot));
+
+  const marcar = (id, accion) => setSeleccion(p => ({ ...p, [id]: accion }));
+  const aprobarTodosPendientes = () => setSeleccion(p => { const next = { ...p }; pendientes.forEach(it => { next[it.id] = 'aprobar'; }); return next; });
+
+  const enviarDecision = async () => {
+    const aprobarItems = Object.entries(seleccion).filter(([, a]) => a === 'aprobar').map(([id]) => Number(id));
+    const devolverItems = Object.entries(seleccion).filter(([, a]) => a === 'devolver').map(([id]) => ({ id: Number(id), motivo: motivos[id] || '' }));
+    if (!aprobarItems.length && !devolverItems.length) { toast('Marca al menos un servicio como aprobado o devuelto', 'warning'); return; }
+    if (devolverItems.some(d => !d.motivo.trim())) { toast('Escribe el motivo de devolución de cada servicio devuelto', 'warning'); return; }
+    setGuardando(true);
+    try {
+      await extApiSend('PUT', `/api/liquidacion/ordenes/${ordenId}/decidir`, { aprobarItems, devolverItems });
+      toast('Decisión guardada', 'success');
+      setSeleccion({}); setMotivos({});
+      await cargar();
+      onDecidido && onDecidido();
+    } catch (e) { toast(e.message, 'danger'); } finally { setGuardando(false); }
+  };
+
+  return h(Modal, { open: true, onClose, title: `Orden ${orden.numero} — ${orden.cliente_nombre}`, lg: true },
+    h('div', { className: 'mb' },
+      h('div', { className: 'flex gap2 mb3' }, h('span', { className: `badge ${orden.estado === 'Revisada' ? 'bg' : orden.estado === 'Devuelta' ? 'br' : 'by'}` }, orden.estado), h('span', { className: 'txs tmut' }, `${orden.fecha_desde} → ${orden.fecha_hasta}`)),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Total a facturar al cliente', value: h('span', { className: 'fbold' }, fmt(ind.totalFacturarCliente)) }),
+        h(IField, { label: 'Margen global', value: h(MargenValor, { pct: ind.margenGlobalPct }) }),
+        h(IField, { label: 'Servicios', value: String(items.length) }),
+      ),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Pagar a Propios', value: fmt(ind.totalPagarPropios) }),
+        h(IField, { label: 'Pagar a Aliados', value: fmt(ind.totalPagarAliados) }),
+        h(IField, { label: 'Pagar a Afiliados', value: fmt(ind.totalPagarAfiliados) }),
+      ),
+      h('div', { className: 'divider' }),
+      !soloLectura && pendientes.length > 0 && h('div', { className: 'flex gap2 mb3' },
+        h('button', { className: 'btn bs btn-sm', onClick: aprobarTodosPendientes }, `✓ Marcar los ${pendientes.length} pendientes para aprobar`)
+      ),
+      h('div', { className: 'tw' },
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Origen → Destino', 'Proveedor', 'Cliente $', 'Proveedor $', 'Margen', 'Estado', !soloLectura && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
+          h('tbody', null, items.map(it => {
+            const s = it.snapshot;
+            return h('tr', { key: it.id },
+              h('td', { className: 'tmono txs' }, it.servicio_numero),
+              h('td', null, s.fecha),
+              h('td', { className: 'tsr' }, `${s.origen} → ${s.destino}`),
+              h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[s.proveedorTipo]}` }, s.proveedorTipo)),
+              h('td', { className: 'fbold' }, fmt(s.valorCliente)),
+              h('td', null, fmt(s.valorProveedor)),
+              h('td', null, h(MargenValor, { pct: s.margenPct })),
+              h('td', null, h('span', { className: `badge ${ITEM_ESTADO_BADGE[it.estado]}` }, it.estado), it.motivo_devolucion && h('div', { className: 'txs tmut' }, it.motivo_devolucion)),
+              !soloLectura && h('td', null,
+                it.estado === 'Pendiente' ? h('div', null,
+                  h('div', { className: 'flex gap2' },
+                    h('button', { className: `btn btn-xs ${seleccion[it.id] === 'aprobar' ? 'bp' : 'bs'}`, onClick: () => marcar(it.id, 'aprobar') }, '✓'),
+                    h('button', { className: `btn btn-xs ${seleccion[it.id] === 'devolver' ? 'bd' : 'bs'}`, onClick: () => marcar(it.id, 'devolver') }, '✕')
+                  ),
+                  seleccion[it.id] === 'devolver' && h('input', { className: 'fi txs', style: { marginTop: 4, minWidth: 160 }, placeholder: 'Motivo…', value: motivos[it.id] || '', onChange: e => setMotivos(p => ({ ...p, [it.id]: e.target.value })) })
+                ) : h('span', { className: 'txs tmut' }, '—')
+              )
+            );
+          }))
+        )
+      ),
+      h('div', { className: 'flex gap2 mt3' },
+        h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'),
+        !soloLectura && pendientes.length > 0 && h('button', { className: 'btn bp', disabled: guardando, onClick: enviarDecision }, guardando ? 'Guardando…' : '✓ Guardar decisión')
+      )
+    )
+  );
+}
+
+// Detalle de una orden de pago (Contabilidad/Gerencia): mismos indicadores, pero solo con los
+// ítems que el Director ya aprobó. Gerencia solo elige cuáles devolver (con motivo) — el resto
+// queda "Autorizado" al guardar, listo para el archivo plano.
+function OrdenPagoDetalleModal({ ordenPagoId, soloLectura, onClose, onDecidido, toast }) {
+  const [op, setOp] = useState(null);
+  const [devolver, setDevolver] = useState({});
+  const [motivos, setMotivos] = useState({});
+  const [guardando, setGuardando] = useState(false);
+
+  const cargar = () => extApiGet(`/api/contabilidad/ordenes-pago/${ordenPagoId}`).then(setOp).catch(e => toast && toast(e.message, 'danger'));
+  useEffect(() => { cargar(); }, [ordenPagoId]);
+
+  if (!op) return h(Modal, { open: true, onClose, title: 'Cargando…' }, h('div', { className: 'mb' }, 'Cargando…'));
+
+  const items = op.items || [];
+  const ind = calcularIndicadoresLiquidacion(items.map(it => it.snapshot));
+  const pendienteDecision = op.estado === 'Pdte. V°B° Gerencia';
+
+  const enviarDecision = async () => {
+    const devolverItems = Object.entries(devolver).filter(([, v]) => v).map(([id]) => ({ id: Number(id), motivo: motivos[id] || '' }));
+    if (devolverItems.some(d => !d.motivo.trim())) { toast('Escribe el motivo de devolución de cada servicio devuelto', 'warning'); return; }
+    if (!window.confirm(devolverItems.length ? `¿Dar V°B° a esta orden de pago devolviendo ${devolverItems.length} servicio(s)?` : '¿Dar V°B° a toda la orden de pago?')) return;
+    setGuardando(true);
+    try {
+      await extApiSend('PUT', `/api/contabilidad/ordenes-pago/${ordenPagoId}/decidir`, { devolverItems });
+      toast('Decisión de Gerencia guardada', 'success');
+      await cargar();
+      onDecidido && onDecidido();
+    } catch (e) { toast(e.message, 'danger'); } finally { setGuardando(false); }
+  };
+
+  const descargarArchivoPlano = () => {
+    const autorizados = items.filter(it => it.estado === 'Autorizado');
+    if (autorizados.length === 0) { toast('No hay servicios autorizados en esta orden', 'warning'); return; }
+    const porProveedor = {};
+    autorizados.forEach(it => {
+      const s = it.snapshot;
+      const key = `${s.proveedorTipo}|${s.proveedorNombre}|${s.proveedorDocumento}`;
+      if (!porProveedor[key]) porProveedor[key] = { tipo: s.proveedorTipo, nombre: s.proveedorNombre, documento: s.proveedorDocumento, total: 0, servicios: 0 };
+      porProveedor[key].total += s.valorProveedor || 0;
+      porProveedor[key].servicios++;
+    });
+    const lineas = ['TIPO|DOCUMENTO|BENEFICIARIO|N_SERVICIOS|VALOR_A_PAGAR'];
+    Object.values(porProveedor).forEach(p => lineas.push(`${p.tipo}|${p.documento}|${p.nombre}|${p.servicios}|${p.total}`));
+    const blob = new Blob([lineas.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `Archivo_Plano_${op.numero}.txt`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('Archivo plano descargado');
+  };
+
+  return h(Modal, { open: true, onClose, title: `Orden de pago ${op.numero} — ${op.cliente_nombre}`, lg: true },
+    h('div', { className: 'mb' },
+      h('div', { className: 'flex gap2 mb3' }, h('span', { className: `badge ${op.estado === 'Aprobada' ? 'bg' : op.estado === 'Devuelta' ? 'br' : 'by'}` }, op.estado), h('span', { className: 'txs tmut' }, `Orden de aprobación ${op.orden_aprobacion_numero} · ${op.fecha_desde} → ${op.fecha_hasta}`)),
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Pagar a Propios', value: fmt(ind.totalPagarPropios) }),
+        h(IField, { label: 'Pagar a Aliados', value: fmt(ind.totalPagarAliados) }),
+        h(IField, { label: 'Pagar a Afiliados', value: fmt(ind.totalPagarAfiliados) }),
+      ),
+      h('div', { className: 'divider' }),
+      h('div', { className: 'tw' },
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º', 'Fecha', 'Tipo', 'Beneficiario', 'Valor a pagar', 'Estado', !soloLectura && pendienteDecision && 'Decisión'].filter(Boolean).map(x => h('th', { key: x }, x)))),
+          h('tbody', null, items.map(it => {
+            const s = it.snapshot;
+            return h('tr', { key: it.id },
+              h('td', { className: 'tmono txs' }, it.servicio_numero),
+              h('td', null, s.fecha),
+              h('td', null, h('span', { className: `badge ${PROVEEDOR_TIPO_BADGE[s.proveedorTipo]}` }, s.proveedorTipo)),
+              h('td', null, s.proveedorNombre),
+              h('td', { className: 'fbold' }, fmt(s.valorProveedor)),
+              h('td', null, h('span', { className: `badge ${ITEM_ESTADO_BADGE[it.estado]}` }, it.estado), it.motivo_devolucion && h('div', { className: 'txs tmut' }, it.motivo_devolucion)),
+              !soloLectura && pendienteDecision && h('td', null,
+                it.estado === 'Aprobado' ? h('div', null,
+                  h('label', { className: 'flex fic gap2', style: { cursor: 'pointer' } },
+                    h('input', { type: 'checkbox', checked: !!devolver[it.id], onChange: e => setDevolver(p => ({ ...p, [it.id]: e.target.checked })) }),
+                    h('span', { className: 'txs' }, 'Devolver')
+                  ),
+                  devolver[it.id] && h('input', { className: 'fi txs', style: { marginTop: 4, minWidth: 160 }, placeholder: 'Motivo…', value: motivos[it.id] || '', onChange: e => setMotivos(p => ({ ...p, [it.id]: e.target.value })) })
+                ) : h('span', { className: 'txs tmut' }, '—')
+              )
+            );
+          }))
+        )
+      ),
+      h('div', { className: 'flex gap2 mt3' },
+        h('button', { className: 'btn bs', onClick: onClose }, 'Cerrar'),
+        op.estado === 'Aprobada' && h('button', { className: 'btn bp', onClick: descargarArchivoPlano }, '⬇ Descargar archivo plano'),
+        !soloLectura && pendienteDecision && h('button', { className: 'btn bsu', disabled: guardando, onClick: enviarDecision }, guardando ? 'Guardando…' : '✓ Dar V°B° / guardar decisión')
+      )
+    )
+  );
+}
+
+// ─────────────────────── MÓDULO APROBACIONES (Director de Operaciones) ───────────────────────
+function AprobacionesDirector({ toast }) {
+  const [ordenes, setOrdenes] = useState([]);
+  const [verOrden, setVerOrden] = useState(null);
+  const [filtro, setFiltro] = useState('pendientes');
+
+  const refresh = () => extApiGet('/api/liquidacion/ordenes').then(setOrdenes).catch(e => toast(e.message, 'danger'));
+  useEffect(() => { refresh(); }, []);
+
+  const visibles = ordenes.filter(o => filtro === 'pendientes' ? (o.conteoItems && o.conteoItems.Pendiente > 0) : true);
+
+  return h('div', null,
+    h('div', { className: 'section-bar mb4' },
+      h('div', null, h('div', { className: 'sh-head' }, '✅ Aprobaciones'), h('div', { className: 'sh-sub' }, 'Órdenes de aprobación enviadas por Operaciones'))
+    ),
+    h('div', { className: 'tabs' },
+      h('div', { className: `tab ${filtro === 'pendientes' ? 'act' : ''}`, onClick: () => setFiltro('pendientes') }, 'Pendientes'),
+      h('div', { className: `tab ${filtro === 'todas' ? 'act' : ''}`, onClick: () => setFiltro('todas') }, 'Todas')
+    ),
+    h('div', { className: 'card' },
+      h('div', { className: 'cb tw' },
+        visibles.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin órdenes de aprobación aquí')) :
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º orden', 'Cliente', 'Rango', 'Servicios', 'Valor cliente', 'Margen', 'Estado'].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, visibles.map(o => h('tr', { key: o.id, style: { cursor: 'pointer' }, onClick: () => setVerOrden(o.id) },
+            h('td', { className: 'tmono txs' }, o.numero),
+            h('td', null, o.cliente_nombre),
+            h('td', null, `${o.fecha_desde} → ${o.fecha_hasta}`),
+            h('td', null, o.conteoItems ? (o.conteoItems.Pendiente + o.conteoItems.Aprobado + o.conteoItems.Devuelto + o.conteoItems.Autorizado) : '—'),
+            h('td', { className: 'fbold' }, o.totales ? fmt(o.totales.totalFacturarCliente) : '—'),
+            h('td', null, o.totales ? h(MargenValor, { pct: o.totales.margenGlobalPct }) : '—'),
+            h('td', null, h('span', { className: `badge ${o.estado === 'Revisada' ? 'bg' : o.estado === 'Devuelta' ? 'br' : 'by'}` }, o.conteoItems && o.conteoItems.Pendiente > 0 ? 'Por revisar' : o.estado))
+          )))
+        )
+      )
+    ),
+    verOrden && h(OrdenAprobacionDetalleModal, { ordenId: verOrden, toast: toast, onClose: () => setVerOrden(null), onDecidido: refresh })
+  );
+}
+function AprobacionesApp({ onBack }) {
+  const [theme, setTheme] = useState((document.documentElement.getAttribute('data-theme')) || 'light');
+  const { toasts, add: toast } = useToast();
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+  const ini = initials(USUARIO.nombre);
+  return h('div', { className: 'app' },
+    h('aside', { className: 'sb' },
+      h('div', { className: 'sb-logo' },
+        h('div', { className: 'co' }, 'Multimodal Group S.A.S.'),
+        h('div', { className: 'sy' }, 'PIG — Aprobaciones'),
+        h('div', { className: 've' }, 'Órdenes de aprobación')
+      ),
+      h('div', { style: { flex: 1 } }),
+      h('div', { className: 'sb-user', style: { flexDirection: 'column', alignItems: 'stretch', gap: 10 } },
+        h('button', { className: 'btn bs btn-sm', style: { width: '100%', justifyContent: 'center' }, onClick: onBack }, '← Panel Principal'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('div', { className: 'av' }, ini),
+          h('div', null, h('div', { className: 'un' }, USUARIO.nombre), h('div', { className: 'ur' }, 'Director de Operaciones'))
+        )
+      )
+    ),
+    h('div', { className: 'main' },
+      h('header', { className: 'topbar' },
+        h('div', null, h('div', { className: 'tb-title' }, 'Aprobaciones')),
+        h('div', { className: 'tb-act' }, h('button', { className: 'theme-toggle', onClick: () => setTheme(t => t === 'light' ? 'dark' : 'light') }, theme === 'light' ? '🌙 Oscuro' : '☀️ Claro'))
+      ),
+      h('main', { className: 'content' }, h(AprobacionesDirector, { toast: toast }))
+    ),
+    h(Toasts, { toasts: toasts })
+  );
+}
+
+// ─────────────────────── MÓDULO CONTABILIDAD (Gerencia + área contable) ───────────────────────
+function ContabilidadGerencia({ toast }) {
+  const [ordenes, setOrdenes] = useState([]);
+  const [verOrden, setVerOrden] = useState(null);
+  const [filtro, setFiltro] = useState('pendientes');
+
+  const refresh = () => extApiGet('/api/contabilidad/ordenes-pago').then(setOrdenes).catch(e => toast(e.message, 'danger'));
+  useEffect(() => { refresh(); }, []);
+
+  const visibles = ordenes.filter(o => filtro === 'pendientes' ? o.estado === 'Pdte. V°B° Gerencia' : true);
+
+  return h('div', null,
+    h('div', { className: 'section-bar mb4' },
+      h('div', null, h('div', { className: 'sh-head' }, '💰 Contabilidad'), h('div', { className: 'sh-sub' }, 'Órdenes de pago — V°B° de Gerencia y descarga de archivos planos'))
+    ),
+    h('div', { className: 'tabs' },
+      h('div', { className: `tab ${filtro === 'pendientes' ? 'act' : ''}`, onClick: () => setFiltro('pendientes') }, 'Pendientes de V°B°'),
+      h('div', { className: `tab ${filtro === 'todas' ? 'act' : ''}`, onClick: () => setFiltro('todas') }, 'Todas')
+    ),
+    h('div', { className: 'card' },
+      h('div', { className: 'cb tw' },
+        visibles.length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin órdenes de pago aquí')) :
+        h('table', null,
+          h('thead', null, h('tr', null, ['N.º orden de pago', 'Cliente', 'Rango', 'Servicios', 'Total a pagar', 'Estado'].map(x => h('th', { key: x }, x)))),
+          h('tbody', null, visibles.map(o => {
+            const totalPagar = (o.conteoItems.Aprobado.total || 0) + (o.conteoItems.Autorizado.total || 0);
+            const nServ = (o.conteoItems.Aprobado.n || 0) + (o.conteoItems.Autorizado.n || 0);
+            return h('tr', { key: o.id, style: { cursor: 'pointer' }, onClick: () => setVerOrden(o.id) },
+              h('td', { className: 'tmono txs' }, o.numero),
+              h('td', null, o.cliente_nombre),
+              h('td', null, `${o.fecha_desde} → ${o.fecha_hasta}`),
+              h('td', null, nServ),
+              h('td', { className: 'fbold' }, fmt(totalPagar)),
+              h('td', null, h('span', { className: `badge ${o.estado === 'Aprobada' ? 'bg' : o.estado === 'Devuelta' ? 'br' : 'by'}` }, o.estado))
             );
           }))
         )
       )
     ),
-    h('div', { className: 'sg' },
-      h('div', { className: 'sc pri' }, h('div', { className: 'sl' }, 'Servicios en rango'), h('div', { className: 'sv' }, filtrados.length), h('div', { className: 'ss' }, `${desde} → ${hasta}`)),
-      h('div', { className: 'sc ok' }, h('div', { className: 'sl' }, 'Valor total'), h('div', { className: 'sv' }, fmt(granTotal)), h('div', { className: 'ss' }, 'suma de servicios filtrados')),
-      h('div', { className: 'sc' }, h('div', { className: 'sl' }, 'Tipos de contrato'), h('div', { className: 'sv' }, Object.keys(porTipo).length), h('div', { className: 'ss' }, 'con movimiento en el rango'))
-    ),
-    h('div', { className: 'card mb4' },
-      h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Resumen por tipo de contrato')),
-      h('div', { className: 'cb tw' },
-        Object.keys(porTipo).length === 0 ? h('div', { className: 'empty' }, h('p', null, 'Sin servicios en el rango seleccionado')) :
-        h('table', null,
-          h('thead', null, h('tr', null, ['Tipo de contrato', 'N.º servicios', 'Valor total'].map(x => h('th', { key: x }, x)))),
-          h('tbody', null, Object.keys(porTipo).map(t => h('tr', { key: t }, h('td', null, t), h('td', null, porTipo[t].count), h('td', { className: 'fbold' }, fmt(porTipo[t].total)))))
-        )
+    verOrden && h(OrdenPagoDetalleModal, { ordenPagoId: verOrden, toast: toast, onClose: () => setVerOrden(null), onDecidido: refresh })
+  );
+}
+function ContabilidadApp({ onBack }) {
+  const [theme, setTheme] = useState((document.documentElement.getAttribute('data-theme')) || 'light');
+  const { toasts, add: toast } = useToast();
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+  const ini = initials(USUARIO.nombre);
+  return h('div', { className: 'app' },
+    h('aside', { className: 'sb' },
+      h('div', { className: 'sb-logo' },
+        h('div', { className: 'co' }, 'Multimodal Group S.A.S.'),
+        h('div', { className: 'sy' }, 'PIG — Contabilidad'),
+        h('div', { className: 've' }, 'Órdenes de pago')
       ),
-      h('div', { className: 'cf' },
-        h('div', { className: 'flex gap2', style: { width: '100%', flexWrap: 'wrap' } },
-          h('button', { className: 'btn bp', onClick: generarExcel }, '📥 Generar Excel por rango de fechas'),
-          tipoInforme === 'cliente' ? React.createElement(React.Fragment, null,
-            h('input', { className: 'fi', style: { maxWidth: 300 }, placeholder: 'correo@cliente.com, otro@cliente.com', value: correo, onChange: e => setCorreo(e.target.value) }),
-            h('button', { className: 'btn bs', onClick: enviarPorCorreo }, '✉️ Preparar envío por correo')
-          ) : h('button', { className: 'btn bsu', onClick: enviarTareaAutorizacion }, '📤 Enviar al Director de Operaciones')
+      h('div', { style: { flex: 1 } }),
+      h('div', { className: 'sb-user', style: { flexDirection: 'column', alignItems: 'stretch', gap: 10 } },
+        h('button', { className: 'btn bs btn-sm', style: { width: '100%', justifyContent: 'center' }, onClick: onBack }, '← Panel Principal'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('div', { className: 'av' }, ini),
+          h('div', null, h('div', { className: 'un' }, USUARIO.nombre), h('div', { className: 'ur' }, 'Contabilidad / Gerencia'))
         )
       )
     ),
-    tipoInforme === 'proveedor' && h('div', { className: 'card' },
-      h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Flujo de autorización — pago a proveedor')),
-      h('div', { className: 'cb tw' },
-        (() => {
-          const tareasContables = getTareas().filter(t => t.tipo === 'pago_proveedor').slice().reverse();
-          if (!tareasContables.length) return h('div', { className: 'empty' }, h('p', null, 'Aún no se ha enviado ninguna relación de pago a proveedor'));
-          return h('table', null,
-            h('thead', null, h('tr', null, ['Fecha de envío', 'Rango', 'Contrato', 'Servicios', 'Valor', 'Asignado a', 'Estado', 'Acc.'].map(x => h('th', { key: x }, x)))),
-            h('tbody', null, tareasContables.map(t => h('tr', { key: t.id },
-              h('td', { className: 'tmono txs' }, new Date(t.fecha).toLocaleString('es-CO')),
-              h('td', null, `${t.desde} → ${t.hasta}`),
-              h('td', null, t.contratoNombre),
-              h('td', null, t.totalServicios),
-              h('td', { className: 'fbold' }, fmt(t.valorTotal)),
-              h('td', null, t.asignadoA, t.autorizadoPor && h('div', { className: 'txs tmut' }, `Autorizado por ${t.autorizadoPor}`)),
-              h('td', null, h('span', { className: `badge ${t.estado === 'PAGADO' ? 'bg' : t.etapa === 'contabilidad' ? 'bb' : 'by'}` }, t.estado === 'PAGADO' ? 'Pagado' : t.etapa === 'contabilidad' ? 'En contabilidad' : 'Por autorizar')),
-              h('td', null,
-                t.etapa === 'autorizacion' && h('button', { className: 'btn btn-sm bp', onClick: () => autorizarTarea(t.id) }, '✓ Autorizar'),
-                t.etapa === 'contabilidad' && t.estado !== 'PAGADO' && h('button', { className: 'btn btn-sm bsu', onClick: () => marcarPagado(t.id) }, '💰 Marcar pagado')
-              )
-            )))
-          );
-        })()
-      )
+    h('div', { className: 'main' },
+      h('header', { className: 'topbar' },
+        h('div', null, h('div', { className: 'tb-title' }, 'Contabilidad')),
+        h('div', { className: 'tb-act' }, h('button', { className: 'theme-toggle', onClick: () => setTheme(t => t === 'light' ? 'dark' : 'light') }, theme === 'light' ? '🌙 Oscuro' : '☀️ Claro'))
+      ),
+      h('main', { className: 'content' }, h(ContabilidadGerencia, { toast: toast }))
     ),
-    mailModal && h(EnviarCorreoModal, { correo: mailModal.correo, asunto: mailModal.asunto, cuerpo: mailModal.cuerpo, toast: toast, onClose: () => setMailModal(null) })
+    h(Toasts, { toasts: toasts })
   );
 }
 
@@ -23982,12 +24284,21 @@ function ComercialApp({ onBack }) {
 }
 
 function HomeERP({ onEnter }) {
+  // "Aprobaciones" y "Contabilidad" son de un solo rol (Director de Operaciones / Gerencia) —
+  // se ocultan para el resto del personal en vez de mostrarlas y bloquear la acción adentro, ya
+  // que solo tienen sentido para quien de verdad va a aprobar algo ahí. admin ve todo (soporte).
+  const puedeAprobaciones = USUARIO.rol === 'admin' || USUARIO.rol === 'director_operaciones';
+  const puedeContabilidad = USUARIO.rol === 'admin' || USUARIO.rol === 'gerente';
   const MODULOS = [
     { id: 'flota', label: 'Trámites y Control de Flota', ico: '🚛', activo: true, desc: 'Vehículos, conductores, trámites, cartera y documentación.' },
     { id: 'operaciones', label: 'Operaciones', ico: '⚙️', activo: true, desc: 'Contratos, servicios, despacho y producción.' },
     { id: 'comercial', label: 'Comercial', ico: '📈', activo: true, desc: 'Clientes corporativos, contratos y tarifarios.' },
-    { id: 'slot4', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
-    { id: 'slot5', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
+    puedeAprobaciones
+      ? { id: 'aprobaciones', label: 'Aprobaciones', ico: '✅', activo: true, desc: 'Órdenes de aprobación de servicios liquidados.' }
+      : { id: 'slot4', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
+    puedeContabilidad
+      ? { id: 'contabilidad', label: 'Contabilidad', ico: '💰', activo: true, desc: 'Órdenes de pago, V°B° de Gerencia y archivos planos.' }
+      : { id: 'slot5', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
     { id: 'slot6', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
     { id: 'slot7', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
     { id: 'slot8', label: '', ico: '➕', activo: false, desc: 'Módulo sin asignar' },
@@ -24393,6 +24704,12 @@ function App() {
   if (topMod === 'comercial') {
     return React.createElement(ComercialApp, { onBack: () => { setShowHome(true); setTopMod(null); } });
   }
+  if (topMod === 'aprobaciones') {
+    return React.createElement(AprobacionesApp, { onBack: () => { setShowHome(true); setTopMod(null); } });
+  }
+  if (topMod === 'contabilidad') {
+    return React.createElement(ContabilidadApp, { onBack: () => { setShowHome(true); setTopMod(null); } });
+  }
   return /*#__PURE__*/React.createElement("div", {
     className: "app"
   }, /*#__PURE__*/React.createElement("aside", {
@@ -24615,16 +24932,20 @@ function ConductorServicioDetalle({ servicio: s, onClose, onEstadoCambiado, toas
   return h(Modal, { open: true, onClose, title: `Servicio ${s.numero || s.id}` },
     h('div', { className: 'mb' },
       h('div', { className: 'flex gap2 mb3' }, h('span', { className: `badge ${ESTADO_SVC_BADGE[s.estado] || 'bgr'}` }, s.estado), s.producto && h('span', { className: 'badge bgr' }, productoLbl(s.producto))),
-      h('div', { className: 'dtg' },
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Cliente'), h('div', { className: 'if-val' }, s.clienteNombre || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Fecha'), h('div', { className: 'if-val' }, s.fecha || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Hora'), h('div', { className: 'if-val' }, s.hora || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Origen'), h('div', { className: 'if-val' }, s.origen || '—')),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Destino'), h('div', { className: 'if-val' }, s.destino || '—')),
-        s.ventanaRuta && h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'Ventana de ruta'), h('div', { className: 'if-val' }, s.ventanaRuta)),
-        h('div', { className: 'drow' }, h('div', { className: 'if-label' }, 'N.º de usuarios'), h('div', { className: 'if-val' }, s.pax || '—')),
+      h('div', { className: 'g2c mb2' },
+        h(IField, { label: 'Cliente', value: s.clienteNombre || '—' }),
+        h(IField, { label: 'Fecha', value: s.fecha || '—' }),
       ),
-      usuarios.length > 0 && h('div', { style: { marginBottom: 11 } },
+      h('div', { className: 'g3c mb2' },
+        h(IField, { label: 'Hora', value: s.hora || '—' }),
+        h(IField, { label: 'Origen', value: s.origen || '—' }),
+        h(IField, { label: 'Destino', value: s.destino || '—' }),
+      ),
+      (s.ventanaRuta || s.pax) && h('div', { className: 'g2c mb2' },
+        h(IField, { label: 'Ventana de ruta', value: s.ventanaRuta || '—' }),
+        h(IField, { label: 'N.º de usuarios', value: s.pax || '—' }),
+      ),
+      usuarios.length > 0 && h('div', { className: 'mb2' },
         h('div', { className: 'if-label' }, 'Usuarios'),
         usuarios.map((u, i) => h('div', { key: i, className: 'if-val' }, `👤 ${u.nombre || '—'}${u.telefono ? ' · 📞 ' + u.telefono : ''}`))
       ),

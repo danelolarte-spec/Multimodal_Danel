@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   nombre TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  rol TEXT NOT NULL DEFAULT 'tramites', -- admin | tramites | operaciones | comercial
+  rol TEXT NOT NULL DEFAULT 'tramites', -- admin | tramites | operaciones | comercial | director_operaciones | gerente
   activo INTEGER NOT NULL DEFAULT 1,
   firma_url TEXT, -- firma electrónica del usuario (imagen data: URL, dibujada en un canvas)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -391,6 +391,46 @@ CREATE TABLE IF NOT EXISTS tarifario_items (
   orden INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tarifario_cliente ON tarifario_items(cliente_id);
+
+-- ───────────────────── LIQUIDACIÓN: órdenes de aprobación y de pago ─────────────────────
+-- Flujo: Operaciones (logística) filtra servicios en estado "Liquidado" por cliente y rango de
+-- fechas y envía una orden de aprobación. Cada servicio incluido queda "congelado" como una fila
+-- en orden_aprobacion_items (snapshot en JSON — el servicio de origen puede ser real (tabla
+-- servicios) o de la demo en memoria del frontend, así que no hay FK a servicios.id, ver
+-- BACKEND_DESIGN.md §16). Director de Operaciones aprueba o devuelve la orden completa o ítems
+-- puntuales; por cada ítem que aprueba se genera (o se suma a) una orden de pago para Contabilidad,
+-- que Gerencia debe autorizar (V°B°) antes de poder descargar los archivos planos de pago.
+CREATE TABLE IF NOT EXISTS ordenes_aprobacion (
+  id TEXT PRIMARY KEY,
+  numero TEXT NOT NULL,
+  contrato_id TEXT, -- informativo, sin FK: el contrato puede ser de la demo en memoria del frontend, no de esta base de datos
+  cliente_nombre TEXT NOT NULL,
+  fecha_desde TEXT NOT NULL, fecha_hasta TEXT NOT NULL,
+  estado TEXT NOT NULL DEFAULT 'Enviada', -- Enviada | Revisada | Devuelta
+  totales TEXT, -- JSON: snapshot de los indicadores globales calculados al momento de enviar
+  creado_por TEXT, creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  revisado_por TEXT, revisado_en TEXT
+);
+CREATE TABLE IF NOT EXISTS orden_aprobacion_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  orden_id TEXT NOT NULL REFERENCES ordenes_aprobacion(id) ON DELETE CASCADE,
+  servicio_id TEXT NOT NULL,
+  servicio_numero TEXT,
+  snapshot TEXT NOT NULL, -- JSON: fecha, hora, origen, destino, producto, valorCliente, valorProveedor, proveedorTipo, proveedorNombre, vehiculoPlaca, conductorNombre, margenPct
+  estado TEXT NOT NULL DEFAULT 'Pendiente', -- Pendiente | Aprobado | Devuelto | Pagado
+  devuelto_por TEXT, devuelto_etapa TEXT, motivo_devolucion TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_orden_aprobacion_items_orden ON orden_aprobacion_items(orden_id);
+
+CREATE TABLE IF NOT EXISTS ordenes_pago (
+  id TEXT PRIMARY KEY,
+  numero TEXT NOT NULL,
+  orden_aprobacion_id TEXT NOT NULL REFERENCES ordenes_aprobacion(id),
+  estado TEXT NOT NULL DEFAULT 'Pdte. V°B° Gerencia', -- Pdte. V°B° Gerencia | Aprobada | Devuelta
+  creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  aprobado_por TEXT, aprobado_en TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ordenes_pago_orden_aprobacion ON ordenes_pago(orden_aprobacion_id);
 `);
 
 // Migraciones ligeras: agrega columnas nuevas a tablas que ya existían en despliegues previos
@@ -438,6 +478,19 @@ function seedIfEmpty() {
     db.prepare(
       'INSERT INTO users (nombre, email, password_hash, rol) VALUES (?, ?, ?, ?)'
     ).run('Administrador PIG', 'admin@multimodalgroup.com', hash, 'admin');
+    // Roles de aprobación del flujo de Liquidación (ver §16 de BACKEND_DESIGN.md): Director de
+    // Operaciones aprueba/devuelve la relación de servicios liquidados que envía Operaciones;
+    // Gerencia da el V°B° final de la orden de pago antes de que Contabilidad descargue los
+    // archivos planos. Usuarios de ejemplo con la misma contraseña que el admin, para poder
+    // probar el flujo completo de principio a fin.
+    const hashAprob = bcrypt.hashSync('director123', 10);
+    db.prepare(
+      'INSERT INTO users (nombre, email, password_hash, rol) VALUES (?, ?, ?, ?)'
+    ).run('Directora de Operaciones', 'director@multimodalgroup.com', hashAprob, 'director_operaciones');
+    const hashGer = bcrypt.hashSync('gerente123', 10);
+    db.prepare(
+      'INSERT INTO users (nombre, email, password_hash, rol) VALUES (?, ?, ?, ?)'
+    ).run('Gerente General', 'gerente@multimodalgroup.com', hashGer, 'gerente');
   }
 
   const vehCount = db.prepare('SELECT COUNT(*) n FROM vehiculos').get().n;
@@ -469,8 +522,8 @@ function seedIfEmpty() {
         convenio_cliente: null, convenio_vigencia: null, convenio_estado: null,
         docs: { soat: ['2026-05-30', 'VENCIDO'], rtm: ['2026-06-01', 'VENCIDO'], to: ['2025-12-31', 'VENCIDO'], polizaRC: ['2026-12-31', 'VIGENTE'] },
         cartera: [725000, 'MORA_CRITICA', '2026-03-15'] },
-      { id: 'v004', placa: 'BNM-112', clase: 'Automóvil', marca: 'Kia', linea: 'Sportage', modelo: 2023, motor: 'KIA23001', chasis: 'CH654987', vin: 'VIN789321456', color: 'Negro', capacidad: 5, combustible: 'Gasolina', tipo: 'Afiliado', interno: '004', estado: 'Activo',
-        propietario_nombre: 'Propietario Afiliado 004', propietario_documento: 'CC-15678901', propietario_telefono: '300-004-0004', propietario_email: 'afiliado004@email.com', fecha_vin: '2024-01-08',
+      { id: 'v004', placa: 'BNM-112', clase: 'Automóvil', marca: 'Kia', linea: 'Sportage', modelo: 2023, motor: 'KIA23001', chasis: 'CH654987', vin: 'VIN789321456', color: 'Negro', capacidad: 5, combustible: 'Gasolina', tipo: 'Aliado', interno: '004', estado: 'Activo',
+        propietario_nombre: 'Flota Aliada Antioquia S.A.S.', propietario_documento: '900112233', propietario_telefono: '300-004-0004', propietario_email: 'contacto@flotaaliada.com', fecha_vin: '2024-01-08',
         convenio_cliente: 'Universidad de Antioquia', convenio_vigencia: '2026-12-31', convenio_estado: 'Vigente',
         docs: { soat: ['2027-01-15', 'VIGENTE'], rtm: ['2026-12-10', 'VIGENTE'], to: ['2028-01-01', 'VIGENTE'], polizaRC: ['2027-01-15', 'VIGENTE'] },
         cartera: [364000, 'MORA_MODERADA', '2026-04-20'] },

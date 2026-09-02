@@ -755,10 +755,17 @@ function conductorPublico(c) {
   const { password_hash, ...pub } = c;
   return pub;
 }
+// La cédula guardada en `conductores` suele traer un prefijo de tipo de documento (ej. "CC-71890234",
+// ver la data de ejemplo en database.js) que el conductor no necesariamente conoce o escribe igual —
+// el login compara solo los dígitos de ambos lados para que "71890234" también entre.
+function soloDigitos(s) { return String(s || '').replace(/\D/g, ''); }
 app.post('/api/conductor-auth/login', (req, res) => {
   const { cedula, password } = req.body || {};
   if (!cedula || !password) return res.status(400).json({ error: 'Faltan credenciales' });
-  const conductor = db.prepare('SELECT * FROM conductores WHERE cedula = ? AND activo = 1').get(cedula);
+  const digitos = soloDigitos(cedula);
+  const conductor = digitos
+    ? db.prepare('SELECT * FROM conductores WHERE activo = 1').all().find(c => soloDigitos(c.cedula) === digitos)
+    : null;
   if (!conductor || !conductor.password_hash || !bcrypt.compareSync(password, conductor.password_hash)) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
@@ -819,6 +826,151 @@ app.put('/api/conductor/servicios/:id/estado', requireConductor, (req, res) => {
   });
   tx();
   res.json(servicioConDetalle(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id)));
+});
+
+// ───────────────────── Liquidación: órdenes de aprobación y de pago ─────────────────────
+// Ver el esquema en database.js para el porqué de guardar cada ítem como snapshot en vez de una FK
+// a servicios.id (los servicios liquidados pueden venir del store de demostración del frontend, que
+// no vive en esta base de datos). El servidor confía en los valores que ya trae cada ítem (se
+// calcularon en el frontend con los mismos datos de tarifario/vehículo que ya tiene cargados) y solo
+// se encarga de la persistencia, los totales, y las transiciones de estado del flujo de aprobación.
+function ordenAprobacionConItems(orden) {
+  if (!orden) return orden;
+  const items = db.prepare('SELECT * FROM orden_aprobacion_items WHERE orden_id=? ORDER BY id').all(orden.id)
+    .map(it => ({ ...it, snapshot: JSON.parse(it.snapshot) }));
+  return { ...orden, totales: orden.totales ? JSON.parse(orden.totales) : null, items };
+}
+function ordenPagoConItems(op) {
+  if (!op) return op;
+  const items = db.prepare("SELECT * FROM orden_aprobacion_items WHERE orden_id=? AND estado IN ('Aprobado','Autorizado','Devuelto') ORDER BY id").all(op.orden_aprobacion_id)
+    .map(it => ({ ...it, snapshot: JSON.parse(it.snapshot) }));
+  return { ...op, items };
+}
+
+app.post('/api/liquidacion/ordenes', requireRole('admin', 'operaciones'), (req, res) => {
+  const { contratoId, clienteNombre, fechaDesde, fechaHasta, items, totales } = req.body || {};
+  if (!clienteNombre || !fechaDesde || !fechaHasta || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Faltan datos de la orden (cliente, rango de fechas o ítems)' });
+  }
+  const id = newId('oa');
+  const numero = `OA-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${id.slice(-4)}`;
+  const tx = db.transaction(() => {
+    db.prepare(`INSERT INTO ordenes_aprobacion (id, numero, contrato_id, cliente_nombre, fecha_desde, fecha_hasta, totales, creado_por)
+      VALUES (?,?,?,?,?,?,?,?)`).run(id, numero, contratoId || null, clienteNombre, fechaDesde, fechaHasta, JSON.stringify(totales || {}), actorNombre(req));
+    const ins = db.prepare('INSERT INTO orden_aprobacion_items (orden_id, servicio_id, servicio_numero, snapshot) VALUES (?,?,?,?)');
+    items.forEach(it => ins.run(id, it.servicioId, it.servicioNumero || it.servicioId, JSON.stringify(it)));
+  });
+  tx();
+  res.status(201).json(ordenAprobacionConItems(db.prepare('SELECT * FROM ordenes_aprobacion WHERE id=?').get(id)));
+});
+
+app.get('/api/liquidacion/ordenes', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM ordenes_aprobacion ORDER BY creado_en DESC').all();
+  const conteo = db.prepare('SELECT id FROM ordenes_aprobacion').all().length
+    ? db.prepare(`SELECT orden_id, estado, COUNT(*) n FROM orden_aprobacion_items GROUP BY orden_id, estado`).all()
+    : [];
+  res.json(rows.map(o => {
+    const c = { Pendiente: 0, Aprobado: 0, Devuelto: 0, Autorizado: 0 };
+    conteo.filter(x => x.orden_id === o.id).forEach(x => { c[x.estado] = x.n; });
+    return { ...o, totales: o.totales ? JSON.parse(o.totales) : null, conteoItems: c };
+  }));
+});
+app.get('/api/liquidacion/ordenes/:id', requireAuth, (req, res) => {
+  const orden = db.prepare('SELECT * FROM ordenes_aprobacion WHERE id=?').get(req.params.id);
+  if (!orden) return res.status(404).json({ error: 'No encontrada' });
+  res.json(ordenAprobacionConItems(orden));
+});
+
+// El Director de Operaciones decide, ítem por ítem: lo que aprueba pasa a integrar (o crea) la
+// orden de pago de Contabilidad; lo que devuelve queda marcado con el motivo para que la logística
+// que envió la orden lo vea y corrija — el resto de la orden sigue su curso normalmente.
+app.put('/api/liquidacion/ordenes/:id/decidir', requireRole('admin', 'director_operaciones'), (req, res) => {
+  const orden = db.prepare('SELECT * FROM ordenes_aprobacion WHERE id=?').get(req.params.id);
+  if (!orden) return res.status(404).json({ error: 'No encontrada' });
+  const aprobarItems = Array.isArray(req.body?.aprobarItems) ? req.body.aprobarItems : [];
+  const devolverItems = Array.isArray(req.body?.devolverItems) ? req.body.devolverItems : [];
+  if (!aprobarItems.length && !devolverItems.length) return res.status(400).json({ error: 'No se marcó ningún ítem para aprobar o devolver' });
+  const actor = actorNombre(req);
+  const tx = db.transaction(() => {
+    aprobarItems.forEach(itemId => {
+      db.prepare("UPDATE orden_aprobacion_items SET estado='Aprobado' WHERE id=? AND orden_id=? AND estado='Pendiente'").run(itemId, orden.id);
+    });
+    devolverItems.forEach(({ id: itemId, motivo }) => {
+      db.prepare("UPDATE orden_aprobacion_items SET estado='Devuelto', devuelto_por=?, devuelto_etapa='Director', motivo_devolucion=? WHERE id=? AND orden_id=? AND estado='Pendiente'")
+        .run(actor, motivo || '', itemId, orden.id);
+    });
+    const pendientes = db.prepare("SELECT COUNT(*) n FROM orden_aprobacion_items WHERE orden_id=? AND estado='Pendiente'").get(orden.id).n;
+    const aprobados = db.prepare("SELECT COUNT(*) n FROM orden_aprobacion_items WHERE orden_id=? AND estado='Aprobado'").get(orden.id).n;
+    if (pendientes === 0) {
+      const nuevoEstado = aprobados > 0 ? 'Revisada' : 'Devuelta';
+      db.prepare('UPDATE ordenes_aprobacion SET estado=?, revisado_por=?, revisado_en=datetime(\'now\') WHERE id=?').run(nuevoEstado, actor, orden.id);
+    }
+    if (aprobados > 0) {
+      const yaExiste = db.prepare('SELECT id FROM ordenes_pago WHERE orden_aprobacion_id=?').get(orden.id);
+      if (!yaExiste) {
+        const opId = newId('op');
+        const numero = `OP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${opId.slice(-4)}`;
+        db.prepare('INSERT INTO ordenes_pago (id, numero, orden_aprobacion_id) VALUES (?,?,?)').run(opId, numero, orden.id);
+      }
+    }
+  });
+  tx();
+  res.json(ordenAprobacionConItems(db.prepare('SELECT * FROM ordenes_aprobacion WHERE id=?').get(orden.id)));
+});
+
+app.get('/api/contabilidad/ordenes-pago', requireRole('admin', 'gerente', 'director_operaciones'), (req, res) => {
+  const rows = db.prepare(`
+    SELECT op.*, oa.numero AS orden_aprobacion_numero, oa.cliente_nombre, oa.fecha_desde, oa.fecha_hasta
+    FROM ordenes_pago op JOIN ordenes_aprobacion oa ON oa.id = op.orden_aprobacion_id
+    ORDER BY op.creado_en DESC
+  `).all();
+  const conteo = db.prepare(`
+    SELECT oai.orden_id, oai.estado, COUNT(*) n, SUM(json_extract(oai.snapshot,'$.valorProveedor')) total
+    FROM orden_aprobacion_items oai
+    WHERE oai.estado IN ('Aprobado','Autorizado','Devuelto')
+    GROUP BY oai.orden_id, oai.estado
+  `).all();
+  res.json(rows.map(op => {
+    const c = { Aprobado: { n: 0, total: 0 }, Autorizado: { n: 0, total: 0 }, Devuelto: { n: 0, total: 0 } };
+    conteo.filter(x => x.orden_id === op.orden_aprobacion_id).forEach(x => { c[x.estado] = { n: x.n, total: x.total || 0 }; });
+    return { ...op, conteoItems: c };
+  }));
+});
+app.get('/api/contabilidad/ordenes-pago/:id', requireRole('admin', 'gerente', 'director_operaciones'), (req, res) => {
+  const op = db.prepare(`
+    SELECT op.*, oa.numero AS orden_aprobacion_numero, oa.cliente_nombre, oa.fecha_desde, oa.fecha_hasta
+    FROM ordenes_pago op JOIN ordenes_aprobacion oa ON oa.id = op.orden_aprobacion_id
+    WHERE op.id=?
+  `).get(req.params.id);
+  if (!op) return res.status(404).json({ error: 'No encontrada' });
+  res.json(ordenPagoConItems(op));
+});
+// Gerencia da (o niega) el V°B° final: lo que no se devuelve queda "Autorizado" — listo para que
+// Contabilidad descargue el archivo plano de pago — y lo que se devuelve va con motivo a la
+// logística que armó la orden original, sin descartar el resto de la orden de pago.
+app.put('/api/contabilidad/ordenes-pago/:id/decidir', requireRole('admin', 'gerente'), (req, res) => {
+  const op = db.prepare('SELECT * FROM ordenes_pago WHERE id=?').get(req.params.id);
+  if (!op) return res.status(404).json({ error: 'No encontrada' });
+  if (op.estado !== 'Pdte. V°B° Gerencia') return res.status(400).json({ error: 'Esta orden de pago ya fue decidida' });
+  const devolverItems = Array.isArray(req.body?.devolverItems) ? req.body.devolverItems : [];
+  const actor = actorNombre(req);
+  const tx = db.transaction(() => {
+    devolverItems.forEach(({ id: itemId, motivo }) => {
+      db.prepare("UPDATE orden_aprobacion_items SET estado='Devuelto', devuelto_por=?, devuelto_etapa='Gerencia', motivo_devolucion=? WHERE id=? AND orden_id=? AND estado='Aprobado'")
+        .run(actor, motivo || '', itemId, op.orden_aprobacion_id);
+    });
+    db.prepare("UPDATE orden_aprobacion_items SET estado='Autorizado' WHERE orden_id=? AND estado='Aprobado'").run(op.orden_aprobacion_id);
+    const autorizados = db.prepare("SELECT COUNT(*) n FROM orden_aprobacion_items WHERE orden_id=? AND estado='Autorizado'").get(op.orden_aprobacion_id).n;
+    const nuevoEstado = autorizados > 0 ? 'Aprobada' : 'Devuelta';
+    db.prepare('UPDATE ordenes_pago SET estado=?, aprobado_por=?, aprobado_en=datetime(\'now\') WHERE id=?').run(nuevoEstado, actor, op.id);
+  });
+  tx();
+  const opActualizada = db.prepare(`
+    SELECT op.*, oa.numero AS orden_aprobacion_numero, oa.cliente_nombre, oa.fecha_desde, oa.fecha_hasta
+    FROM ordenes_pago op JOIN ordenes_aprobacion oa ON oa.id = op.orden_aprobacion_id
+    WHERE op.id=?
+  `).get(op.id);
+  res.json(ordenPagoConItems(opActualizada));
 });
 
 // Genera el extracto de un servicio puntual ya ejecutado/asignado, sin pedir datos adicionales —
