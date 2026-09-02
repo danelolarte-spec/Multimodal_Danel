@@ -1,6 +1,6 @@
 # Diseño del backend/API real — PIG Trámites y Operaciones
 
-Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. El flujo real de Liquidación → Aprobaciones (Director de Operaciones) → Contabilidad (V°B° de Gerencia + archivo plano de pago), con indicadores financieros globales y por servicio, está en §18. El calendario del Portal Conductor, la edición y bloqueo de la liquidación desde el módulo mientras está en una orden activa, la relación de cobro al cliente sin datos internos del proveedor, y el detalle completo de un servicio para Director/Gerencia están en §19. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
+Estado: **API fase 1 implementada** (auth + flota + trámites + afiliación) y **frontend conectado para Auth, Vehículos, Conductores y Cartera** (probado con dos sesiones/computadores simulados: un cambio hecho en uno aparece en el otro sin recargar código, solo la página). El submódulo **Extractos (FUEC)** está completo end-to-end (backend + frontend + probado) — ver §8. El módulo **Comercial** (alta de clientes corporativos con contrato + tarifario, con flujo de verificación hacia Trámites) también está completo end-to-end — ver §9. Extractos por grupo específico desde el Portal del Afiliado (con rutas por municipio de Colombia), generación de extracto de un solo clic por servicio puntual, bloqueo por mora, buscador de extractos y firma electrónica están descritos en §10. Numeración legible de servicio, jerarquía de campos, ruta gráfica, historial de cambios, línea de "ahora" en el Tablero, búsqueda por número y ficha de contrato (contactos/consideraciones/visibilidad por logístico) están en §14. El mapa real de la ruta del servicio (Leaflet/OpenStreetMap), la carga masiva de tarifas por Excel con plantillas por defecto (Comercial), y el Portal Conductor (login propio, mobile-first, con su propia máquina de estados incluyendo "Rechazado") están en §15. El flujo real de Liquidación → Aprobaciones (Director de Operaciones) → Contabilidad (V°B° de Gerencia + archivo plano de pago), con indicadores financieros globales y por servicio, está en §18. El calendario del Portal Conductor, la edición y bloqueo de la liquidación desde el módulo mientras está en una orden activa, la relación de cobro al cliente sin datos internos del proveedor, y el detalle completo de un servicio para Director/Gerencia están en §19. La creación masiva/recurrente de servicios (patrón por días de la semana + rango de fechas, con calendario editable a mano) está en §20. Este documento describe la arquitectura, el modelo de datos, el contrato de la API y el plan para terminar de conectar el resto del frontend.
 
 ## 1. Objetivo y alcance
 
@@ -632,3 +632,33 @@ allá de los campos que ya usaban los indicadores — ahora también guarda `ori
 `paradas` (para el mapa), `ventanaRuta`, `referencia`, `obs`, `pax`, `usuarios`, y
 `tarifaConfirmada`/`novedadesLiquidacion` de la liquidación — todo lo que se necesita para que el
 detalle sea realmente completo y no una versión reducida.
+
+## 20. Creación masiva/recurrente de servicios
+
+Pedido: poder crear de una vez un mismo servicio para varias fechas — por ejemplo "todos los
+lunes a las 07:00", o "lunes, martes y viernes hasta una fecha" — pudiendo además elegir en un
+calendario qué días aplicarían.
+
+- `ServicioMasivoModal` (nuevo, botón "🗓 Servicios recurrentes" junto a "+ Nuevo Servicio" y
+  "📥 Carga masiva (Excel)" en Servicios → Lista de servicios) reutiliza los mismos campos que
+  `ServicioFormModal` (cliente/contrato, ruta del tarifario real o del mock, origen/destino
+  georreferenciados, ventana de ruta, referencia, anotaciones, pax, valor, vehículo/conductor
+  opcionales y los campos personalizados del contrato) — todos aplican igual a cada servicio que se
+  genere. Lo único que varía entre servicios es la fecha.
+- El patrón de recurrencia son tres controles: días de la semana (Lun a Dom, selección múltiple),
+  fecha "Desde" y fecha "Hasta". El botón "↻ Aplicar patrón al calendario" recorre ese rango día por
+  día y marca en un calendario mensual (`CalendarioSeleccionFechas`) cada fecha cuyo día de la semana
+  esté seleccionado.
+- Ese calendario admite además edición manual: tocar cualquier casilla agrega o quita esa fecha
+  puntual de la selección (para sumar un día suelto fuera del patrón, o saltarse un feriado), y cada
+  fecha seleccionada también aparece como una etiqueta con "✕" para quitarla sin tener que ubicarla en
+  la grilla. Aplicar el patrón nuevamente solo agrega fechas nuevas al conjunto — no borra lo que el
+  usuario ya haya tocado a mano.
+- Al generar, `ServicioMasivoModal` arma un servicio por cada fecha seleccionada (mismos datos, fecha
+  distinta) y se los pasa a `onGenerar`. `Servicios.handleGenerarMasivo` los crea uno por uno con la
+  misma lógica mock-vs-real que ya usa `handleSave` para un solo servicio: si el contrato es de
+  Comercial (`extracto_cliente_id`), hace un `POST /api/servicios` secuencial (con `await`) por cada
+  fecha — no hay endpoint de bulk-insert nuevo, cada llamada reutiliza `POST /api/servicios` tal cual
+  ya existía, y como better-sqlite3 es síncrono no hay riesgo de que dos fechas colisionen en la
+  numeración diaria (`numeroServicio`); si es un contrato mock, llama `addServicioStore` por cada
+  fecha sobre el store en memoria. Al terminar, refresca la lista y muestra "N servicios creados".

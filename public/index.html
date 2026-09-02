@@ -21810,6 +21810,248 @@ function ServicioFormModal({ servicio, contratos, vehiculos, conductores, onSave
     )
   );
 }
+
+// ─────────────── Creación masiva/recurrente de servicios (mismo servicio, varias fechas) ───────────────
+// Se pide: "crear un servicio para todos los lunes a las 07:00", o "Lunes-Martes-Viernes hasta una
+// fecha", con la posibilidad de elegir en un calendario qué días aplicarían. El patrón (días de la
+// semana + rango) precarga el calendario, y desde ahí se puede tocar cualquier día para agregarlo o
+// quitarlo a mano (feriados, días sueltos, etc.) antes de generar los servicios.
+const DIAS_SEMANA_MASIVO = [
+  { v: 1, l: 'Lun' }, { v: 2, l: 'Mar' }, { v: 3, l: 'Mié' }, { v: 4, l: 'Jue' },
+  { v: 5, l: 'Vie' }, { v: 6, l: 'Sáb' }, { v: 0, l: 'Dom' },
+];
+const MESES_MASIVO = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+function CalendarioSeleccionFechas({ mesRef, onMesChange, seleccionadas, onToggleFecha }) {
+  const year = mesRef.getFullYear(), month = mesRef.getMonth();
+  const primerDia = new Date(year, month, 1);
+  let startDow = primerDia.getDay(); startDow = startDow === 0 ? 6 : startDow - 1;
+  const diasEnMes = new Date(year, month + 1, 0).getDate();
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const celdas = [];
+  for (let i = 0; i < startDow; i++) celdas.push(null);
+  for (let d = 1; d <= diasEnMes; d++) celdas.push(d);
+  return h('div', null,
+    h('div', { className: 'flex fic', style: { justifyContent: 'space-between', marginBottom: 8 } },
+      h('button', { type: 'button', className: 'bi', onClick: () => onMesChange(new Date(year, month - 1, 1)) }, '‹'),
+      h('span', { className: 'ct', style: { textTransform: 'capitalize' } }, `${MESES_MASIVO[month]} ${year}`),
+      h('button', { type: 'button', className: 'bi', onClick: () => onMesChange(new Date(year, month + 1, 1)) }, '›')
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3, marginBottom: 3 } },
+      ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => h('div', { key: d, className: 'txs tmut fbold', style: { textAlign: 'center', padding: '2px 0' } }, d))
+    ),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3 } },
+      celdas.map((d, i) => {
+        if (!d) return h('div', { key: 'e' + i });
+        const fechaISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const sel = seleccionadas.has(fechaISO);
+        const esHoy = fechaISO === hoyISO;
+        return h('div', {
+          key: fechaISO, onClick: () => onToggleFecha(fechaISO),
+          style: {
+            textAlign: 'center', padding: '7px 0', borderRadius: 'var(--r-sm)', cursor: 'pointer', fontSize: 12, fontWeight: sel ? 800 : 500,
+            background: sel ? 'var(--amber)' : 'var(--surface)',
+            color: sel ? '#fff' : 'var(--t2)',
+            border: esHoy ? '2px solid var(--amber)' : '1px solid var(--border)',
+          }
+        }, d);
+      })
+    )
+  );
+}
+
+function ServicioMasivoModal({ contratos, vehiculos, conductores, onGenerar, onGuardarTarifa, onClose }) {
+  const [f, setF] = useState(Object.assign({}, SERVICIO_FORM_DEFAULT));
+  const [rutaSel, setRutaSel] = React.useState('');
+  const [nuevaRuta, setNuevaRuta] = React.useState(false);
+  const [tarifaAfiliado, setTarifaAfiliado] = React.useState(0);
+  const [guardarEnContrato, setGuardarEnContrato] = React.useState(true);
+  const [tarifarioReal, setTarifarioReal] = React.useState([]);
+  const set = k => e => setF(p => Object.assign({}, p, { [k]: e.target.value }));
+  const setCampo = (campoId, val) => setF(p => Object.assign({}, p, { campos: Object.assign({}, p.campos, { [campoId]: val }) }));
+  const k = contratos.find(x => x.id === f.contratoId);
+  const esReal = !!(k && k.extracto_cliente_id);
+  const tarifario = esReal ? [] : ((k && k.productos) || []);
+
+  React.useEffect(() => {
+    if (k && k.extracto_cliente_id) {
+      extApiGet(`/api/extractos/clientes/${k.extracto_cliente_id}/tarifario`).then(setTarifarioReal).catch(() => setTarifarioReal([]));
+    } else {
+      setTarifarioReal([]);
+    }
+  }, [f.contratoId]);
+
+  const setRuta = e => {
+    const val = e.target.value;
+    setRutaSel(val);
+    if (esReal) {
+      const item = tarifarioReal.find(x => String(x.id) === val);
+      setF(p => Object.assign({}, p, {
+        producto: item ? item.tipo_servicio : '',
+        valor: item ? item.valor_servicio : 0,
+        origen: item && item.origen ? item.origen : p.origen,
+        destino: item && item.destino ? item.destino : p.destino,
+      }));
+      return;
+    }
+    if (val === '__nueva__') {
+      setNuevaRuta(true);
+      setTarifaAfiliado(0);
+      setF(p => Object.assign({}, p, { producto: '' }));
+      return;
+    }
+    setNuevaRuta(false);
+    const entry = tarifario.find(x => x.producto === val);
+    setTarifaAfiliado(entry && entry.tarifaAfiliado ? entry.tarifaAfiliado : 0);
+    setF(p => Object.assign({}, p, {
+      producto: val,
+      valor: getTarifaProducto(k, val),
+      origen: entry && entry.origen ? entry.origen : p.origen,
+      destino: entry && entry.destino ? entry.destino : p.destino,
+    }));
+  };
+  const setProductoNuevo = e => {
+    const nuevo = e.target.value;
+    setF(p => Object.assign({}, p, { producto: nuevo, valor: productoTarifa(nuevo) }));
+  };
+
+  // --- patrón de recurrencia + calendario de selección ---
+  const [diasSemana, setDiasSemana] = React.useState(new Set());
+  const [fechaInicio, setFechaInicio] = React.useState(new Date().toISOString().slice(0, 10));
+  const [fechaFin, setFechaFin] = React.useState('');
+  const [seleccionadas, setSeleccionadas] = React.useState(new Set());
+  const [mesRef, setMesRef] = React.useState(new Date());
+
+  const toggleDiaSemana = v => setDiasSemana(p => { const n = new Set(p); n.has(v) ? n.delete(v) : n.add(v); return n; });
+  const toggleFecha = fechaISO => setSeleccionadas(p => { const n = new Set(p); n.has(fechaISO) ? n.delete(fechaISO) : n.add(fechaISO); return n; });
+
+  const aplicarPatron = () => {
+    if (!fechaInicio || !fechaFin) { alert('Define la fecha de inicio y la fecha fin del rango'); return; }
+    if (fechaFin < fechaInicio) { alert('La fecha fin no puede ser anterior a la fecha de inicio'); return; }
+    if (diasSemana.size === 0) { alert('Selecciona al menos un día de la semana'); return; }
+    const nuevas = new Set(seleccionadas);
+    const cur = new Date(fechaInicio + 'T00:00:00');
+    const fin = new Date(fechaFin + 'T00:00:00');
+    while (cur <= fin) {
+      if (diasSemana.has(cur.getDay())) nuevas.add(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+    setSeleccionadas(nuevas);
+    setMesRef(new Date(fechaInicio + 'T00:00:00'));
+  };
+
+  const fechasOrdenadas = Array.from(seleccionadas).sort();
+
+  const generar = () => {
+    if (!f.contratoId || !f.origen || !f.destino || !f.hora) { alert('Cliente, ruta, origen/destino y hora son obligatorios'); return; }
+    if (fechasOrdenadas.length === 0) { alert('Selecciona al menos una fecha — aplica un patrón o toca los días en el calendario'); return; }
+    if (!esReal && nuevaRuta && guardarEnContrato && f.producto && k) {
+      const entry = { producto: f.producto, tarifa: Number(f.valor) || 0, tarifaAfiliado: Number(tarifaAfiliado) || 0 };
+      if (f.producto === 'disponibilidad') entry.cantidadDisponibilidades = 1;
+      else { entry.origen = f.origen.trim(); entry.destino = f.destino.trim(); }
+      onGuardarTarifa && onGuardarTarifa(k.id, entry);
+    }
+    const { fecha, ...base } = Object.assign({}, f, { pax: Number(f.pax) || 1, valor: Number(f.valor) || 0, vehiculoId: f.vehiculoId || null, conductorId: f.conductorId || null });
+    onGenerar(fechasOrdenadas.map(fch => Object.assign({}, base, { fecha: fch })));
+  };
+
+  return h(Modal, { open: true, onClose: onClose, title: '🗓 Crear servicios recurrentes / masivos', lg: true },
+    h('div', { className: 'mb' },
+      h(Alert, { type: 'info' }, 'Crea un mismo servicio para varias fechas de una vez: por ejemplo, "todos los lunes" o "lunes, martes y viernes hasta una fecha". Define el patrón y aplícalo al calendario, o toca directamente los días que quieras incluir o quitar.'),
+      h('div', { className: 'g2c' },
+        h('div', null,
+          h(FG, { label: 'Cliente (contrato)' }, h('select', { className: 'fsel', value: f.contratoId, onChange: set('contratoId') }, h('option', { value: '' }, 'Seleccionar...'), contratos.map(c => h('option', { key: c.id, value: c.id }, c.nombre + (c.extracto_cliente_id ? ' (Comercial)' : ''))))),
+          esReal
+            ? h(FG, { label: 'Servicio y ruta — tarifario de ' + (k ? k.nombre : '') + ' (Comercial)' },
+                h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
+                  h('option', { value: '' }, 'Seleccionar...'),
+                  tarifarioReal.map(t => h('option', { key: t.id, value: String(t.id) },
+                    `${PRODUCTOS_SERVICIO[t.tipo_servicio]?.label || t.tipo_servicio}${t.descripcion ? ' — ' + t.descripcion : ''} — ${t.origen || '—'} → ${t.destino || '—'} (cobrar ${fmt(t.valor_servicio)}${t.pago_afiliado ? ' · pagar ' + fmt(t.pago_afiliado) : ''})`))))
+            : h(FG, { label: 'Servicio y ruta' + (k ? ' — tarifario de ' + k.nombre : '') },
+                h('select', { className: 'fsel', value: rutaSel, onChange: setRuta },
+                  h('option', { value: '' }, 'Seleccionar...'),
+                  tarifario.map(x => h('option', { key: x.producto, value: x.producto },
+                    `${productoLbl(x.producto)} — ${x.producto === 'disponibilidad' ? `${x.cantidadDisponibilidades || 1} disp.` : `${x.origen || '—'} → ${x.destino || '—'}`} (cobrar ${fmt(x.tarifa)}${x.tarifaAfiliado ? ' · pagar ' + fmt(x.tarifaAfiliado) : ''})`)),
+                  h('option', { value: '__nueva__' }, '+ Generar nueva ruta / servicio no tarifado'))),
+          esReal && rutaSel === '' && tarifarioReal.length === 0 && h('div', { className: 'al al-warn', style: { marginBottom: 10 } }, 'Este cliente todavía no tiene rutas/servicios tarifados — pídele a Comercial que los cargue antes de crear el servicio.'),
+          !esReal && nuevaRuta && h('div', { style: { background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, marginBottom: 10 } },
+            h('div', { className: 'al al-info mb2' }, 'Este servicio no está tarifado para este cliente. Define el tipo de servicio y, si aplica, la tarifa a cobrar y a pagar.'),
+            h('div', { className: 'fg2' },
+              h(FG, { label: 'Tipo de servicio' }, h('select', { className: 'fsel', value: f.producto || '', onChange: setProductoNuevo }, h('option', { value: '' }, 'Seleccionar...'), Object.keys(PRODUCTOS_SERVICIO).map(p => h('option', { key: p, value: p }, PRODUCTOS_SERVICIO[p].label)))),
+              h(FG, { label: 'Pago a afiliado/convenio (COP)' }, h('input', { type: 'number', className: 'fi', value: tarifaAfiliado, onChange: e => setTarifaAfiliado(e.target.value) }))
+            ),
+            k && h('label', { className: 'flex fic gap2 tsr', style: { cursor: 'pointer' } },
+              h('input', { type: 'checkbox', checked: guardarEnContrato, onChange: e => setGuardarEnContrato(e.target.checked) }),
+              `Guardar esta ruta y tarifa en el contrato de ${k.nombre} para futuros servicios`)
+          ),
+          h(FG, { label: 'Origen (georreferenciado)' }, h(AddressField, { value: f.origen, geo: f.origenGeo, placeholder: 'Dirección de recogida', onChange: (texto, geo) => setF(p => Object.assign({}, p, { origen: texto }, geo ? { origenGeo: geo } : {})) })),
+          h(FG, { label: 'Destino (georreferenciado)' }, h(AddressField, { value: f.destino, geo: f.destinoGeo, placeholder: 'Dirección de destino', onChange: (texto, geo) => setF(p => Object.assign({}, p, { destino: texto }, geo ? { destinoGeo: geo } : {})) })),
+          h(FG, { label: 'Ventana de ruta' }, h('input', { className: 'fi', placeholder: 'Ej: 06:00 - 06:30', value: f.ventanaRuta || '', onChange: set('ventanaRuta') })),
+          h(FG, { label: 'Referencia' }, h('input', { className: 'fi', placeholder: 'Referencia / PO del cliente', value: f.referencia || '', onChange: set('referencia') })),
+          h(FG, { label: 'Anotaciones generales' }, h('textarea', { className: 'fta', rows: 2, value: f.obs, onChange: set('obs') })),
+          h('div', { className: 'fg2' },
+            h(FG, { label: 'Número de usuarios' }, h('input', { type: 'number', min: 1, className: 'fi', value: f.pax, onChange: set('pax') })),
+            h(FG, { label: 'Valor del servicio (COP)' }, h('input', { type: 'number', className: 'fi', value: f.valor, onChange: set('valor') }))
+          ),
+          h('div', { className: 'divider' }),
+          h('div', { className: 'fg2' },
+            h(FG, { label: 'Vehículo (opcional, aplica a todas las fechas)' }, h('select', { className: 'fsel', value: f.vehiculoId || '', onChange: set('vehiculoId') }, h('option', { value: '' }, 'Sin asignar'), vehiculos.map(v => h('option', { key: v.id, value: v.id }, `${v.placa} (${v.capacidad} pas.)`)))),
+            h(FG, { label: 'Conductor (opcional, aplica a todas las fechas)' }, h('select', { className: 'fsel', value: f.conductorId || '', onChange: set('conductorId') }, h('option', { value: '' }, 'Sin asignar'), conductores.map(c => h('option', { key: c.id, value: c.id }, c.nombre))))
+          )
+        ),
+        h('div', null,
+          k && k.campos && k.campos.length > 0
+            ? h('div', { className: 'card mb3' },
+                h('div', { className: 'ch' }, h('span', { className: 'ct' }, 'Campos: ' + k.nombre)),
+                h('div', { className: 'cb' }, k.campos.map(c => h('div', { key: c.id, className: 'fg' },
+                  h('label', { className: 'fl' }, c.nombre + (c.req ? ' *' : '')),
+                  c.tipo === 'fecha' ? h('input', { type: 'date', className: 'fi', value: f.campos[c.id] || '', onChange: e => setCampo(c.id, e.target.value) })
+                    : c.tipo === 'hora' ? h('input', { type: 'time', className: 'fi', value: f.campos[c.id] || '', onChange: e => setCampo(c.id, e.target.value) })
+                    : c.tipo === 'numero' ? h('input', { type: 'number', className: 'fi', value: f.campos[c.id] || '', onChange: e => setCampo(c.id, e.target.value) })
+                    : c.tipo === 'lista' ? h('select', { className: 'fsel', value: f.campos[c.id] || '', onChange: e => setCampo(c.id, e.target.value) }, h('option', { value: '' }, 'Seleccionar...'), (c.opciones || []).map(o => h('option', { key: o, value: o }, o)))
+                    : c.tipo === 'paradas' ? h(ParadasField, { value: f.campos[c.id] || [], onChange: v => setCampo(c.id, v) })
+                    : h('input', { type: 'text', className: 'fi', placeholder: c.nombre, value: f.campos[c.id] || '', onChange: e => setCampo(c.id, e.target.value) })
+                )))
+              )
+            : h('div', { className: 'empty mb3', style: { border: '1px dashed var(--border2)', borderRadius: 'var(--r)' } }, h('p', null, 'Selecciona un contrato'), h('div', { className: 'txs tmut' }, 'para ver sus campos personalizados')),
+          h('div', { className: 'card', style: { background: 'var(--surface2)' } },
+            h('div', { className: 'ch' }, h('span', { className: 'ct' }, '📅 ¿Cuándo se repite?')),
+            h('div', { className: 'cb' },
+              h(FG, { label: 'Hora (aplica a todas las fechas)' }, h('input', { type: 'time', className: 'fi', value: f.hora, onChange: set('hora') })),
+              h('label', { className: 'fl' }, 'Días de la semana'),
+              h('div', { className: 'flex gap2 mb3', style: { flexWrap: 'wrap' } },
+                DIAS_SEMANA_MASIVO.map(d => h('button', {
+                  key: d.v, type: 'button',
+                  className: `btn btn-sm ${diasSemana.has(d.v) ? 'bp' : 'bs'}`,
+                  onClick: () => toggleDiaSemana(d.v)
+                }, d.l))
+              ),
+              h('div', { className: 'fg2' },
+                h(FG, { label: 'Desde' }, h('input', { type: 'date', className: 'fi', value: fechaInicio, onChange: e => setFechaInicio(e.target.value) })),
+                h(FG, { label: 'Hasta' }, h('input', { type: 'date', className: 'fi', value: fechaFin, onChange: e => setFechaFin(e.target.value) }))
+              ),
+              h('button', { type: 'button', className: 'btn bsu mb3', onClick: aplicarPatron }, '↻ Aplicar patrón al calendario'),
+              h(CalendarioSeleccionFechas, { mesRef, onMesChange: setMesRef, seleccionadas, onToggleFecha: toggleFecha }),
+              fechasOrdenadas.length > 0 && h('div', { className: 'mt3' },
+                h('div', { className: 'txs tmut fbold mb2' }, `${fechasOrdenadas.length} fecha(s) seleccionada(s)`),
+                h('div', { className: 'flex gap2', style: { flexWrap: 'wrap' } },
+                  fechasOrdenadas.map(fc => h('span', {
+                    key: fc, className: 'badge bgr', style: { display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' },
+                    onClick: () => toggleFecha(fc), title: 'Quitar esta fecha'
+                  }, fc, ' ✕'))
+                )
+              )
+            )
+          )
+        )
+      ),
+      h('div', { className: 'flex gap2 mt3' },
+        h('button', { className: 'btn bs', onClick: onClose }, 'Cancelar'),
+        h('button', { className: 'btn bp', onClick: generar }, `✓ Generar ${fechasOrdenadas.length || ''} servicio(s)`.replace('  ', ' '))
+      )
+    )
+  );
+}
 function AccionesMenu({ estado, onVer, onEditar, onCancelar, onLiquidar, onGenerarExtracto, onAvanzarEstado, onConfirmarLiquidacion, onAsignar, onVerHistorial }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -22028,6 +22270,7 @@ function Servicios({ toast }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [masivoOpen, setMasivoOpen] = useState(false);
   const [fContratos, setFContratos] = useState([]); // [] = todos
   const [fConductores, setFConductores] = useState([]);
   const [fVehiculos, setFVehiculos] = useState([]);
@@ -22101,6 +22344,18 @@ function Servicios({ toast }) {
     } catch (e) { toast(e.message, 'danger'); return; }
     refresh(); setModalOpen(false); setEditing(null);
   };
+  const handleGenerarMasivo = async lista => {
+    const kk = contratos.find(x => x.id === lista[0].contratoId);
+    try {
+      if (kk && kk.extracto_cliente_id) {
+        for (const s of lista) await extApiSend('POST', '/api/servicios', servicioApiBody(s));
+      } else {
+        lista.forEach(s => addServicioStore(s));
+      }
+      toast(`${lista.length} servicios creados`, 'success');
+    } catch (e) { toast(e.message, 'danger'); }
+    refresh(); setMasivoOpen(false);
+  };
   const handleDel = id => {
     if (!window.confirm('¿Eliminar este servicio?')) return;
     delServicioStore(id); refresh();
@@ -22163,6 +22418,7 @@ function Servicios({ toast }) {
       h('div', null, h('div', { className: 'sh-head' }, '📋 Servicios'), h('div', { className: 'sh-sub' }, `${list.length} servicios · ${fmt(total)}`)),
       tab === 'lista' && h('div', { className: 'flex gap2' },
         h('button', { className: 'btn bs', onClick: () => setImportOpen(true) }, '📥 Carga masiva (Excel)'),
+        h('button', { className: 'btn bs', onClick: () => setMasivoOpen(true) }, '🗓 Servicios recurrentes'),
         h('button', { className: 'btn bp', onClick: () => { setEditing(null); setModalOpen(true); } }, '+ Nuevo Servicio')
       )
     ),
@@ -22252,6 +22508,7 @@ function Servicios({ toast }) {
     ),
     modalOpen && h(ServicioFormModal, { servicio: editing, contratos: contratos, vehiculos: vehiculos, conductores: conductores, onSave: handleSave, onGuardarTarifa: handleGuardarTarifa, onClose: () => { setModalOpen(false); setEditing(null); } }),
     importOpen && h(ImportarServiciosModal, { contratos: contratos, toast: toast, onImport: refresh, onClose: () => setImportOpen(false) }),
+    masivoOpen && h(ServicioMasivoModal, { contratos: contratos, vehiculos: vehiculos, conductores: conductores, onGenerar: handleGenerarMasivo, onGuardarTarifa: handleGuardarTarifa, onClose: () => setMasivoOpen(false) }),
     viewing && h(VerServicioModal, {
       servicio: viewing,
       contrato: contratos.find(x => x.id === viewing.contratoId),
